@@ -328,28 +328,32 @@ function ProductSearch({products,value,onChange,style}){
 // ============================================================
 function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[data,setData]=useState([]);const[loading,setLoading]=useState(true);
-  const[dateFrom,setDateFrom]=useState("");const[dateTo,setDateTo]=useState("");
+  const today=new Date().toISOString().slice(0,10);const d10=new Date(Date.now()-10*86400000).toISOString().slice(0,10);const d5=new Date(Date.now()+5*86400000).toISOString().slice(0,10);
+  const[dateFrom,setDateFrom]=useState(d10);const[dateTo,setDateTo]=useState(d5);
   const[filter,setFilter]=useState("all");const[sortCol,setSortCol]=useState("status");const[sortDir,setSortDir]=useState("asc");
   const[colSearch,setColSearch]=useState({product_code:"",product_name:"",status_desc:""});
   const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[]});
-  const[showHidden,setShowHidden]=useState(false);
+  const[showHidden,setShowHidden]=useState(false);const[showMatched,setShowMatched]=useState(false);
   const[supplementing,setSupplementing]=useState(null);
   const[suppForm,setSuppForm]=useState({qty:1,assembler:"",tester:"",inspector:"",customer_id:"",assembly_date:"",note:""});
   const[staffModal,setStaffModal]=useState({show:false,role:"general"});
   const[editModal,setEditModal]=useState({show:false,item:null,tableName:""});
 
-  const load=useCallback(async()=>{setLoading(true);try{setData(await supaFetch("v_reconciliation",{query:"select=*"})||[]);}catch(e){console.error(e);}setLoading(false);},[]);
+  const load=useCallback(async()=>{setLoading(true);try{let query="select=*";if(dateFrom)query+=`&order_date=gte.${dateFrom}`;if(dateTo)query+=`&order_date=lte.${dateTo}`;setData(await supaFetch("v_reconciliation",{query})||[]);}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
 
   const searchByDate=async()=>{if(!dateFrom||!dateTo)return;setLoading(true);try{setData(await supaRpc("fn_reconcile_by_date",{p_date_from:dateFrom,p_date_to:dateTo})||[]);}catch(e){console.error(e);load();}setLoading(false);};
 
-  const loadDetail=async(productId,productCode)=>{
-    if(expandedRow===productCode){setExpandedRow(null);return;}
-    setExpandedRow(productCode);setSupplementing(null);
+  const loadDetail=async(productId,productCode,orderDate)=>{
+    const rowKey=productCode+"_"+orderDate;
+    if(expandedRow===rowKey){setExpandedRow(null);return;}
+    setExpandedRow(rowKey);setSupplementing(null);
     try{
+      const dateFilter=orderDate?`&assembly_orders.order_date=eq.${orderDate}`:"";
+      const dateFilter2=orderDate?`&packaging_orders.order_date=eq.${orderDate}`:"";
       const[asmItems,pkgItems]=await Promise.all([
-        supaFetch("assembly_items",{query:`select=*,assembly_orders(order_no,order_date),products!inner(product_id,product_name)&products.product_id=eq.${encodeURIComponent(productCode)}`}),
-        supaFetch("packaging_items",{query:`select=*,packaging_orders(order_no,order_date),products!inner(product_id,product_name),customers(name)&products.product_id=eq.${encodeURIComponent(productCode)}`})
+        supaFetch("assembly_items",{query:`select=*,assembly_orders(order_no,order_date),products!inner(product_id,product_name)&products.product_id=eq.${encodeURIComponent(productCode)}${dateFilter}`}),
+        supaFetch("packaging_items",{query:`select=*,packaging_orders(order_no,order_date),products!inner(product_id,product_name),customers(name)&products.product_id=eq.${encodeURIComponent(productCode)}${dateFilter2}`})
       ]);
       setExpandData({asm:asmItems||[],pkg:pkgItems||[]});
     }catch(e){console.error(e);setExpandData({asm:[],pkg:[]});}
@@ -387,7 +391,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       toast(`數量已從 ${oldQty} 修改為 ${newQty}`,"success");
       setEditModal({show:false,item:null,tableName:""});
       // Reload expand data
-      if(expandedRow){const pc=expandedRow;setExpandedRow(null);setTimeout(()=>loadDetail(null,pc),100);}
+      if(expandedRow){const[pc,od]=expandedRow.split("_");setExpandedRow(null);setTimeout(()=>loadDetail(null,pc,od),100);}
       load();
     }catch(e){toast("修改失敗: "+e.message,"error");}
   };
@@ -413,12 +417,13 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const statusFilter=r=>{if(filter==="all")return true;if(filter==="matched")return r.status==="matched";if(filter==="mismatch")return r.status==="qty_mismatch";if(filter==="missing")return r.status==="missing_pkg"||r.status==="missing_asm";return true;};
   const colFilter=r=>{for(const[k,v] of Object.entries(colSearch)){if(!v)continue;if(!String(r[k]||"").toLowerCase().includes(v.toLowerCase()))return false;}return true;};
   const hiddenFilter=r=>{if(showHidden)return true;return !r.hidden;};
+  const matchedFilter=r=>{if(showMatched)return true;if(filter==="matched")return true;return r.status!=="matched";};
 
   const statusOrder={missing_pkg:0,missing_asm:1,qty_mismatch:2,matched:3};
-  const sortFn=(a,b)=>{let va,vb;if(sortCol==="status"){va=statusOrder[a.status]??4;vb=statusOrder[b.status]??4;}else if(["assembly_qty","packaging_qty","diff"].includes(sortCol)){va=Number(a[sortCol])||0;vb=Number(b[sortCol])||0;}else if(sortCol==="first_asm_date"){va=a.first_asm_date||"9999";vb=b.first_asm_date||"9999";}else{va=String(a[sortCol]||"").toLowerCase();vb=String(b[sortCol]||"").toLowerCase();}if(va<vb)return sortDir==="asc"?-1:1;if(va>vb)return sortDir==="asc"?1:-1;return 0;};
+  const sortFn=(a,b)=>{let va,vb;if(sortCol==="status"){va=statusOrder[a.status]??4;vb=statusOrder[b.status]??4;}else if(["assembly_qty","packaging_qty","diff"].includes(sortCol)){va=Number(a[sortCol])||0;vb=Number(b[sortCol])||0;}else if(sortCol==="order_date"){va=a.order_date||"9999";vb=b.order_date||"9999";}else{va=String(a[sortCol]||"").toLowerCase();vb=String(b[sortCol]||"").toLowerCase();}if(va<vb)return sortDir==="asc"?-1:1;if(va>vb)return sortDir==="asc"?1:-1;return 0;};
   const toggleSort=col=>{if(sortCol===col)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortCol(col);setSortDir("asc");}};
 
-  const filtered=data.filter(statusFilter).filter(colFilter).filter(hiddenFilter).sort(sortFn);
+  const filtered=data.filter(statusFilter).filter(colFilter).filter(hiddenFilter).filter(matchedFilter).sort(sortFn);
   const allVisible=data.filter(hiddenFilter);
   const errors=allVisible.filter(d=>d.status==="missing_pkg"||d.status==="missing_asm").length;
   const warnings=allVisible.filter(d=>d.status==="qty_mismatch").length;
@@ -440,13 +445,14 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       <input type="date" className="input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
       <span style={{color:"var(--muted)"}}>～</span>
       <input type="date" className="input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
-      <button className="btn btn-primary" onClick={searchByDate}>查詢</button>
-      <button className="btn btn-secondary" onClick={()=>{setDateFrom("");setDateTo("");load();}}>重置</button>
+      <button className="btn btn-primary" onClick={load}>查詢</button>
+      <button className="btn btn-secondary" onClick={()=>{setDateFrom("");setDateTo("");}}>重置</button>
+      <button className="btn btn-secondary" onClick={()=>{const d30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);setDateFrom(d30);setDateTo(today);}}>過去30天</button>
       {filter!=="all"&&<button className="btn btn-sm btn-secondary" style={{color:"var(--danger)"}} onClick={()=>setFilter("all")}>✕ 清除篩選</button>}
       <div className="action-bar no-print">
         <button className="btn btn-secondary btn-sm btn-icon" onClick={()=>{
           exportToExcel(filtered,[
-            {label:"日期",value:r=>r.first_asm_date||r.first_pkg_date||""},
+            {label:"日期",value:r=>r.order_date||""},
             {label:"產品編號",value:r=>r.product_code},
             {label:"產品名稱",value:r=>r.product_name},
             {label:"組裝數",value:r=>r.assembly_qty},
@@ -459,6 +465,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
         <button className="btn btn-secondary btn-sm btn-icon" onClick={()=>printSection("核對報告",`${dateFrom||"全部"}～${dateTo||"全部"} · ${filtered.length}筆`)}>🖨 列印</button>
       </div>
       <div style={{flex:1}}/>
+      <label className="show-resolved-toggle"><input type="checkbox" checked={showMatched} onChange={e=>setShowMatched(e.target.checked)}/>顯示已完成 ({matched})</label>
       <label className="show-resolved-toggle"><input type="checkbox" checked={showHidden} onChange={e=>setShowHidden(e.target.checked)}/>顯示已隱藏 ({hiddenCount})</label>
     </div>
 
@@ -471,7 +478,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       <thead>
         <tr>
           <th style={{width:30}}></th>
-          <SortTh col="first_asm_date">日期</SortTh>
+          <SortTh col="order_date">日期</SortTh>
           <SortTh col="product_code">產品編號</SortTh>
           <SortTh col="product_name">產品名稱</SortTh>
           <SortTh col="assembly_qty" style={{textAlign:"right"}}>組裝數</SortTh>
@@ -495,11 +502,11 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
           const isHidden=!!r.hidden;
           const needsAction=r.status!=="matched";
           const cls=(r.status==="missing_pkg"||r.status==="missing_asm"?"row-error":r.status==="qty_mismatch"?"row-warning":"")+(isHidden?" row-hidden":isResolved?" row-resolved":"")+" clickable";
-          const isExpanded=expandedRow===r.product_code;
-          return <React.Fragment key={r.product_code||i}>
-            <tr className={cls} onClick={()=>loadDetail(r.product_id,r.product_code)}>
+          const isExpanded=expandedRow===(r.product_code+"_"+r.order_date);
+          return <React.Fragment key={(r.product_code||"")+"_"+(r.order_date||i)}>
+            <tr className={cls} onClick={()=>loadDetail(r.product_id,r.product_code,r.order_date)}>
               <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExpanded?"▼":"▶"}</td>
-              <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.first_asm_date||r.first_pkg_date||"-"}</td>
+              <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.order_date||"-"}</td>
               <td><code style={{fontWeight:600}}>{r.product_code}</code></td>
               <td>{r.product_name}</td>
               <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.assembly_qty}</td>
@@ -552,11 +559,11 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
                 </div>
 
                 {needsAction&&!supplementing&&<div style={{display:"flex",gap:8,marginTop:8}}>
-                  <button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補組裝單</button>
-                  <button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button>
+                  <button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button>
+                  <button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,order_date:r.order_date,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button>
                 </div>}
 
-                {supplementing&&supplementing.product_code===r.product_code&&(
+                {supplementing&&supplementing.product_code===r.product_code&&supplementing.order_date===r.order_date&&(
                   <div className="supplement-box">
                     <div className="supplement-title">{supplementing.type==="asm"?"🔧 補建組裝單":"📦 補建包裝出貨單"} — {r.product_code} {r.product_name}</div>
                     <div className="form-row">
