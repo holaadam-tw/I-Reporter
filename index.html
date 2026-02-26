@@ -187,6 +187,19 @@ async function supaPatch(table,query,body){
   const text=await res.text();return text?JSON.parse(text):null;
 }
 
+// Fetch all rows, paginating past Supabase 1000-row default limit
+async function supaFetchAll(table,baseQuery){
+  const pageSize=1000;let all=[];let offset=0;
+  while(true){
+    const rows=await supaFetch(table,{query:baseQuery+"&limit="+pageSize+"&offset="+offset});
+    if(!rows||rows.length===0)break;
+    all=all.concat(rows);
+    if(rows.length<pageSize)break;
+    offset+=pageSize;
+  }
+  return all;
+}
+
 const{useState,useEffect,useCallback,useRef}=React;
 
 // ============================================================
@@ -788,7 +801,7 @@ function App(){
   const[tab,setTab]=useState("reconciliation");const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[staff,setStaff]=useState([]);
   const[toastMsg,setToastMsg]=useState(null);const[toastType,setToastType]=useState("success");
   const toast=(msg,type="success")=>{setToastMsg(msg);setToastType(type);setTimeout(()=>setToastMsg(null),4000);};
-  const loadProducts=useCallback(async()=>{try{setProducts(await supaFetch("products",{query:"select=*&is_active=eq.true&order=product_id"})||[]);}catch(e){}},[]);
+  const loadProducts=useCallback(async()=>{try{setProducts(await supaFetchAll("products","select=*&is_active=eq.true&order=product_id")||[]);}catch(e){}},[]);
   const loadCustomers=useCallback(async()=>{try{setCustomers(await supaFetch("customers",{query:"select=*&is_active=eq.true&order=name"})||[]);}catch(e){}},[]);
   const loadStaff=useCallback(async()=>{try{setStaff(await supaFetch("staff",{query:"select=*&is_active=eq.true&order=name"})||[]);}catch(e){}},[]);
   useEffect(()=>{loadProducts();loadCustomers();loadStaff();},[loadProducts,loadCustomers,loadStaff]);
