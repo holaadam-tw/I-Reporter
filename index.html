@@ -307,6 +307,41 @@ function ProductSearch({products,value,onChange,style}){
   return <div className="search-select" ref={ref} style={style}><input className="input" style={{width:"100%"}} placeholder={selected?`${selected.product_id} - ${selected.product_name}`:"🔍 搜尋產品..."} value={open?search:""} onFocus={()=>{setOpen(true);setSearch("");}} onChange={e=>{setSearch(e.target.value);setOpen(true);}}/>{open&&<div className="search-dropdown">{filtered.length===0&&<div style={{padding:10,color:"var(--muted)",textAlign:"center"}}>無符合產品</div>}{filtered.map(p=><div key={p.id} className="search-dropdown-item" onClick={()=>{onChange(p.id);setOpen(false);setSearch("");}}><code>{p.product_id}</code>{p.product_name}</div>)}</div>}</div>;
 }
 
+function SupplementForm({supplementing,suppForm,setSuppForm,customers,staff,onSubmit,onCancel,onAddStaff}){
+  if(!supplementing)return null;
+  return <div className="supplement-box" style={{margin:"8px 16px 12px"}}>
+    <div className="supplement-title">{supplementing.type==="asm"?"🔧 補建組裝單":"📦 補建包裝出貨單"} — {supplementing.product_code} {supplementing.product_name}</div>
+    <div className="form-row">
+      <span className="filter-label">數量：</span>
+      <input type="number" className="input" style={{width:80}} min="1" value={suppForm.qty} onChange={e=>setSuppForm({...suppForm,qty:e.target.value})}/>
+      {supplementing.type==="asm"&&<>
+        <span className="filter-label">組裝人員：</span>
+        <StaffSelect staff={staff} value={suppForm.assembler} onChange={v=>setSuppForm({...suppForm,assembler:v})} onAdd={()=>onAddStaff("assembler")} roleFilter="assembler" multi style={{width:180}}/>
+        <span className="filter-label">組裝日期：</span>
+        <input type="date" className="input" style={{width:140}} value={suppForm.order_date||""} onChange={e=>setSuppForm({...suppForm,order_date:e.target.value})}/>
+        <span className="filter-label">入庫日期：</span>
+        <input type="date" className="input" style={{width:140}} value={suppForm.assembly_date} onChange={e=>setSuppForm({...suppForm,assembly_date:e.target.value})}/>
+      </>}
+      {supplementing.type==="pkg"&&<>
+        <span className="filter-label">客戶：</span>
+        <select className="input" style={{width:110}} value={suppForm.customer_id} onChange={e=>setSuppForm({...suppForm,customer_id:e.target.value})}>
+          <option value="">庫存</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <span className="filter-label">測試人員：</span>
+        <StaffSelect staff={staff} value={suppForm.tester} onChange={v=>setSuppForm({...suppForm,tester:v})} onAdd={()=>onAddStaff("tester")} roleFilter="tester" multi style={{width:160}}/>
+        <span className="filter-label">檢驗人員：</span>
+        <StaffSelect staff={staff} value={suppForm.inspector} onChange={v=>setSuppForm({...suppForm,inspector:v})} onAdd={()=>onAddStaff("inspector")} roleFilter="inspector" style={{width:130}}/>
+      </>}
+    </div>
+    <div className="form-row" style={{marginTop:6}}>
+      <span className="filter-label">備註：</span>
+      <input className="input" style={{flex:1}} value={suppForm.note} onChange={e=>setSuppForm({...suppForm,note:e.target.value})} placeholder="補單原因"/>
+      <button className="btn btn-primary" onClick={onSubmit}>確認補單</button>
+      <button className="btn btn-secondary" onClick={onCancel}>取消</button>
+    </div>
+  </div>;
+}
+
 function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[data,setData]=useState([]);const[loading,setLoading]=useState(true);
   const[orderModal,setOrderModal]=useState({show:false,orderNo:null,orderType:null});
@@ -410,10 +445,18 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
           {isExpanded&&<tr className="expand-row"><td colSpan={9}>
-            <ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})} onEditClick={(tableName,item)=>setEditModal({show:true,tableName,item:{id:item.id,qty:item.qty,orderNo:(tableName==="assembly_items"?item.assembly_orders:item.packaging_orders)?.order_no,productCode:item.products?.product_id,productName:item.products?.product_name}})}/>
-            {needsAction&&!supplementing&&<div style={{display:"flex",gap:8,marginTop:8,padding:"0 16px 12px"}}><button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button><button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,order_date:r.order_date,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button></div>}
-            {supplementing&&supplementing.product_code===r.product_code&&(<div className="supplement-box"><div className="supplement-title">{supplementing.type==="asm"?"🔧 補建組裝單":"📦 補建包裝出貨單"} — {r.product_code} {r.product_name}</div><div className="form-row"><span className="filter-label">數量：</span><input type="number" className="input" style={{width:80}} min="1" value={suppForm.qty} onChange={e=>setSuppForm({...suppForm,qty:e.target.value})}/>{supplementing.type==="asm"&&<><span className="filter-label">組裝人員：</span><StaffSelect staff={staff} value={suppForm.assembler} onChange={v=>setSuppForm({...suppForm,assembler:v})} onAdd={()=>setStaffModal({show:true,role:"assembler"})} roleFilter="assembler" multi style={{width:180}}/><span className="filter-label">組裝日期：</span><input type="date" className="input" style={{width:140}} value={suppForm.order_date||""} onChange={e=>setSuppForm({...suppForm,order_date:e.target.value})}/><span className="filter-label">入庫日期：</span><input type="date" className="input" style={{width:140}} value={suppForm.assembly_date} onChange={e=>setSuppForm({...suppForm,assembly_date:e.target.value})}/></>}{supplementing.type==="pkg"&&<><span className="filter-label">客戶：</span><select className="input" style={{width:110}} value={suppForm.customer_id} onChange={e=>setSuppForm({...suppForm,customer_id:e.target.value})}><option value="">庫存</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><span className="filter-label">測試人員：</span><StaffSelect staff={staff} value={suppForm.tester} onChange={v=>setSuppForm({...suppForm,tester:v})} onAdd={()=>setStaffModal({show:true,role:"tester"})} roleFilter="tester" multi style={{width:160}}/><span className="filter-label">檢驗人員：</span><StaffSelect staff={staff} value={suppForm.inspector} onChange={v=>setSuppForm({...suppForm,inspector:v})} onAdd={()=>setStaffModal({show:true,role:"inspector"})} roleFilter="inspector" style={{width:130}}/></>}</div><div className="form-row" style={{marginTop:6}}><span className="filter-label">備註：</span><input className="input" style={{flex:1}} value={suppForm.note} onChange={e=>setSuppForm({...suppForm,note:e.target.value})} placeholder="補單原因"/><button className="btn btn-primary" onClick={submitSupplement}>確認補單</button><button className="btn btn-secondary" onClick={()=>setSupplementing(null)}>取消</button></div></div>)}
-          </div></td></tr>}
+            <ExpandDetailSection expandData={expandData}
+              onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
+              onEditClick={(tableName,item)=>setEditModal({show:true,tableName,item:{id:item.id,qty:item.qty,orderNo:(tableName==="assembly_items"?item.assembly_orders:item.packaging_orders)?.order_no,productCode:item.products?.product_id,productName:item.products?.product_name}})}/>
+            {needsAction&&!supplementing&&<div style={{display:"flex",gap:8,padding:"0 16px 12px"}}>
+              <button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button>
+              <button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button>
+            </div>}
+            {supplementing&&supplementing.product_code===r.product_code&&<SupplementForm
+              supplementing={supplementing} suppForm={suppForm} setSuppForm={setSuppForm}
+              customers={customers} staff={staff} onSubmit={submitSupplement}
+              onCancel={()=>setSupplementing(null)} onAddStaff={role=>setStaffModal({show:true,role})}/>}
+          </td></tr>}
         </React.Fragment>;
       })}</tbody>
     </table></div>}
