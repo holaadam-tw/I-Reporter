@@ -148,12 +148,27 @@ function App(){
   const today=new Date().toISOString().slice(0,10);
   const todayDisplay=today.replace(/-/g,"/");
 
+  // Fetch all rows from a table, paginating past Supabase's 1000-row default limit
+  const fetchAll=useCallback(async(table,baseQuery)=>{
+    const pageSize=1000;
+    let allRows=[];
+    let offset=0;
+    while(true){
+      const rows=await supaFetch(table,{query:`${baseQuery}&limit=${pageSize}&offset=${offset}`});
+      if(!rows||rows.length===0)break;
+      allRows=allRows.concat(rows);
+      if(rows.length<pageSize)break; // last page
+      offset+=pageSize;
+    }
+    return allRows;
+  },[]);
+
   const loadData=useCallback(async()=>{
     setLoading(true);
     setLoadError(null);
     try{
       const[prods,staffList]=await Promise.all([
-        supaFetch("products",{query:"select=*&is_active=eq.true&order=product_id"}),
+        fetchAll("products","select=*&is_active=eq.true&order=product_id"),
         supaFetch("staff",{query:"select=*&is_active=eq.true&order=name"})
       ]);
       setProducts(prods||[]);
@@ -166,7 +181,7 @@ function App(){
       setLoadError("❌ 資料載入失敗: "+e.message);
     }
     setLoading(false);
-  },[]);
+  },[fetchAll]);
 
   const loadTodayRecords=useCallback(async()=>{
     try{
