@@ -13,7 +13,7 @@ DROP TRIGGER IF EXISTS set_testing_order_no ON testing_orders;
 DROP FUNCTION IF EXISTS generate_order_no();
 
 CREATE OR REPLACE FUNCTION generate_order_no()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 DECLARE
   prefix TEXT;
   date_str TEXT;
@@ -42,7 +42,7 @@ BEGIN
     END;
   END LOOP;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER set_assembly_order_no
   BEFORE INSERT ON assembly_orders FOR EACH ROW

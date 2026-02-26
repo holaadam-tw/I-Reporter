@@ -561,8 +561,38 @@ function DashboardTab({toast,onNavigate}){
   const[loading,setLoading]=useState(true);
   const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[]});
   const[orderModal,setOrderModal]=useState({show:false,orderNo:null,orderType:null});
+  const[activeCard,setActiveCard]=useState(null);const[cardOrders,setCardOrders]=useState([]);const[cardLoading,setCardLoading]=useState(false);
   const d30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
   const toggleDetail=async(productCode)=>{const rowKey=productCode;if(expandedRow===rowKey){setExpandedRow(null);return;}setExpandedRow(rowKey);try{setExpandData(await loadDetailItems(productCode,d30,today));}catch(e){console.error(e);setExpandData({asm:[],pkg:[]});}};
+
+  const handleCardClick=async(cardKey)=>{
+    if(activeCard===cardKey){setActiveCard(null);setCardOrders([]);return;}
+    setActiveCard(cardKey);setCardLoading(true);
+    try{
+      if(cardKey==="asm"){
+        const data=await supaFetch("assembly_orders",{query:`select=*,assembly_items(*,products(product_id,product_name))&order_date=eq.${today}&order=created_at.desc`});
+        setCardOrders(data||[]);
+      }else if(cardKey==="pkg"){
+        const data=await supaFetch("packaging_orders",{query:`select=*,packaging_items(*,products(product_id,product_name)),customers(name,customer_code)&order_date=eq.${today}&order=created_at.desc`});
+        setCardOrders(data||[]);
+      }else if(cardKey==="orders"){
+        const[asm,pkg]=await Promise.all([
+          supaFetch("assembly_orders",{query:`select=*,assembly_items(qty)&order_date=eq.${today}&order=created_at.desc`}),
+          supaFetch("packaging_orders",{query:`select=*,packaging_items(qty),customers(name)&order_date=eq.${today}&order=created_at.desc`})
+        ]);
+        const combined=[...(asm||[]).map(o=>({...o,_type:"assembly",_totalQty:(o.assembly_items||[]).reduce((s,i)=>s+(i.qty||0),0)})),...(pkg||[]).map(o=>({...o,_type:"packaging",_totalQty:(o.packaging_items||[]).reduce((s,i)=>s+(i.qty||0),0)}))];
+        combined.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+        setCardOrders(combined);
+      }else if(cardKey==="anomalies"){
+        try{
+          const rec=await supaRpc("fn_reconcile_by_date_range",{p_date_from:d30,p_date_to:today});
+          const unresolved=(rec||[]).filter(r=>r.status!=="matched"&&!r.hidden&&!r.resolved_at);
+          setCardOrders(unresolved);
+        }catch(e){setCardOrders(recentAnomalies);}
+      }
+    }catch(e){console.error(e);setCardOrders([]);}
+    setCardLoading(false);
+  };
 
   useEffect(()=>{(async()=>{setLoading(true);try{
     // today stats — parallel queries
@@ -611,12 +641,55 @@ function DashboardTab({toast,onNavigate}){
 
   if(loading)return <div className="spinner"/>;
   return <div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:24}}>
-      <div style={cardStyle}><div className="stat-icon" style={{background:"var(--accent)"}}>🔧</div><div><div className="stat-value">{stats.asmQty}</div><div className="stat-label">今日組裝數量</div></div></div>
-      <div style={cardStyle}><div className="stat-icon" style={{background:"var(--primary)"}}>📦</div><div><div className="stat-value">{stats.pkgQty}</div><div className="stat-label">今日包裝數量</div></div></div>
-      <div style={cardStyle}><div className="stat-icon" style={{background:"#6B7280"}}>📋</div><div><div className="stat-value">{stats.asmOrders} / {stats.pkgOrders}</div><div className="stat-label">今日組裝單 / 包裝單</div></div></div>
-      <div style={cardStyle}><div className="stat-icon" style={{background:stats.anomalies>0?"var(--danger)":"var(--success)"}}>{stats.anomalies>0?"⚠":"✓"}</div><div><div className="stat-value">{stats.anomalies}</div><div className="stat-label">待處理異常</div></div></div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:activeCard?12:24}}>
+      {[{key:"asm",icon:"🔧",bg:"var(--accent)",value:stats.asmQty,label:"今日組裝數量"},
+        {key:"pkg",icon:"📦",bg:"var(--primary)",value:stats.pkgQty,label:"今日包裝數量"},
+        {key:"orders",icon:"📋",bg:"#6B7280",value:`${stats.asmOrders} / ${stats.pkgOrders}`,label:"今日組裝單 / 包裝單"},
+        {key:"anomalies",icon:stats.anomalies>0?"⚠":"✓",bg:stats.anomalies>0?"var(--danger)":"var(--success)",value:stats.anomalies,label:"待處理異常"}
+      ].map(c=><div key={c.key} style={{...cardStyle,cursor:"pointer",borderColor:activeCard===c.key?"var(--primary)":"var(--border)",boxShadow:activeCard===c.key?"0 0 0 2px var(--primary)":"none",transition:"all .2s"}} onClick={()=>handleCardClick(c.key)}>
+        <div className="stat-icon" style={{background:c.bg}}>{c.icon}</div><div><div className="stat-value">{c.value}</div><div className="stat-label">{c.label}</div></div>
+      </div>)}
     </div>
+
+    {activeCard&&<div className="card" style={{marginBottom:24}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:14}}>{
+          activeCard==="asm"?"今日組裝單據":activeCard==="pkg"?"今日包裝單據":activeCard==="orders"?"今日全部單據":"待處理異常"
+        }{!cardLoading&&<span style={{fontWeight:400,fontSize:12,color:"var(--muted)",marginLeft:8}}>共 {cardOrders.length} 筆</span>}</div>
+        <button className="btn btn-sm btn-secondary" style={{fontSize:12,padding:"2px 8px"}} onClick={()=>{setActiveCard(null);setCardOrders([]);}}>✕ 收起</button>
+      </div>
+      {cardLoading?<div className="spinner"/>:cardOrders.length===0?<div style={{color:"var(--muted)",textAlign:"center",padding:24}}>暫無資料</div>:
+        activeCard==="anomalies"?<><div className="table-wrap"><table><thead><tr><th style={{width:30}}></th><th>產品編號</th><th>產品名稱</th><th style={{textAlign:"right"}}>組裝數</th><th style={{textAlign:"right"}}>包裝數</th><th style={{textAlign:"right"}}>差異</th><th>狀態</th></tr></thead>
+          <tbody>{cardOrders.map((r,i)=>{const isExp=expandedRow===r.product_code;return <React.Fragment key={i}>
+            <tr className="clickable" onClick={()=>toggleDetail(r.product_code)}>
+              <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExp?"▼":"▶"}</td>
+              <td><code style={{fontWeight:600}}>{r.product_code}</code></td><td>{r.product_name}</td>
+              <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.assembly_qty}</td>
+              <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.packaging_qty}</td>
+              <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,textAlign:"right",color:r.diff>0?"var(--danger)":"var(--warning)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
+              <td><Badge type={r.status==="missing_pkg"||r.status==="missing_asm"||r.status==="over_packaged"?"error":r.status==="wip_normal"?"info":"warning"}>{r.status_desc}</Badge></td>
+            </tr>
+            {isExp&&<tr className="expand-row"><td colSpan={7}><ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}/></td></tr>}
+          </React.Fragment>;})}</tbody></table></div><div style={{textAlign:"right",marginTop:8}}><button className="btn btn-sm btn-secondary" onClick={()=>onNavigate("reconciliation")}>查看完整核對報告 →</button></div></>
+        :activeCard==="orders"?<div className="table-wrap"><table><thead><tr><th>單號</th><th>類型</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th></tr></thead>
+          <tbody>{cardOrders.map((o,i)=><tr key={i} className="clickable" onClick={()=>setOrderModal({show:true,orderNo:o.order_no,orderType:o._type})}>
+            <td><code style={{fontWeight:600,color:"var(--primary)"}}>{o.order_no}</code></td>
+            <td><Badge type={o._type==="assembly"?"info":"default"}>{o._type==="assembly"?"組裝單":"包裝單"}</Badge></td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{o._totalQty}</td>
+            <td><Badge type={o.status==="approved"?"success":"warning"}>{o.status==="approved"?"已核准":"草稿"}</Badge></td>
+          </tr>)}</tbody></table></div>
+        :<div className="table-wrap"><table><thead><tr><th>單號</th><th>產品</th><th style={{textAlign:"right"}}>數量</th>{activeCard==="pkg"&&<th>客戶</th>}<th>狀態</th></tr></thead>
+          <tbody>{cardOrders.map((o,i)=>{const items=activeCard==="asm"?o.assembly_items:o.packaging_items;return <React.Fragment key={i}>
+            <tr className="clickable" onClick={()=>setOrderModal({show:true,orderNo:o.order_no,orderType:activeCard==="asm"?"assembly":"packaging"})}>
+              <td><code style={{fontWeight:600,color:"var(--primary)"}}>{o.order_no}</code></td>
+              <td>{(items||[]).map(it=>it.products?.product_id||"").filter(Boolean).join(", ")}</td>
+              <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{(items||[]).reduce((s,it)=>s+(it.qty||0),0)}</td>
+              {activeCard==="pkg"&&<td>{o.customers?.name||<span style={{color:"var(--muted)"}}>庫存</span>}</td>}
+              <td><Badge type={o.status==="approved"?"success":"warning"}>{o.status==="approved"?"已核准":"草稿"}</Badge></td>
+            </tr>
+          </React.Fragment>;})}</tbody></table></div>
+      }
+    </div>}
 
     <div className="card" style={{marginBottom:24}}>
       <div style={{fontWeight:700,fontSize:14,marginBottom:16}}>本週產量趨勢</div>
@@ -637,7 +710,7 @@ function DashboardTab({toast,onNavigate}){
     </div>
 
     <OrderDetailModal show={orderModal.show} orderNo={orderModal.orderNo} orderType={orderModal.orderType} onClose={()=>setOrderModal({show:false,orderNo:null,orderType:null})}/>
-    {recentAnomalies.length>0&&<div className="card">
+    {recentAnomalies.length>0&&activeCard!=="anomalies"&&<div className="card">
       <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>最近異常（待處理）</div>
       <div className="table-wrap"><table><thead><tr><th style={{width:30}}></th><th>產品編號</th><th>產品名稱</th><th style={{textAlign:"right"}}>組裝數</th><th style={{textAlign:"right"}}>包裝數</th><th style={{textAlign:"right"}}>差異</th><th>狀態</th></tr></thead>
       <tbody>{recentAnomalies.map((r,i)=>{const isExp=expandedRow===r.product_code;return <React.Fragment key={i}>
