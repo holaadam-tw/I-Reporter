@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>組裝填報 | I-Reporter</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#F0EDE6;--surface:#fff;--border:#D8D3CA;--text:#2C2A26;--muted:#8A857C;--primary:#1A6B4E;--primary-light:#E8F5EE;--primary-dark:#0F4030;--danger:#C4362C;--success:#1A6B4E;--accent:#2D5F8A}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--text);font-size:16px;-webkit-tap-highlight-color:transparent}
+code{font-family:'JetBrains Mono',monospace}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+@keyframes checkmark{from{opacity:0;transform:scale(.5)}to{opacity:1;transform:scale(1)}}
+
+.app{max-width:500px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+
+.header{background:var(--primary-dark);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.header-title{color:#fff;font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+.header-sub{color:rgba(255,255,255,.5);font-size:12px}
+.header-date{color:rgba(255,255,255,.7);font-size:13px;font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,.1);padding:4px 10px;border-radius:6px}
+
+.content{flex:1;padding:16px}
+
+.section{background:var(--surface);border-radius:12px;padding:16px;margin-bottom:14px;border:1px solid var(--border);animation:fadeIn .3s}
+.section-title{font-size:13px;font-weight:700;color:var(--primary);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+
+/* Worker selection */
+.worker-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.worker-btn{padding:14px 8px;border-radius:10px;border:2px solid var(--border);background:var(--surface);font-size:15px;font-weight:600;cursor:pointer;transition:all .15s;text-align:center;font-family:inherit;-webkit-appearance:none}
+.worker-btn:active{transform:scale(.95)}
+.worker-btn.selected{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
+
+/* Product search */
+.search-box{position:relative}
+.search-input{width:100%;padding:14px 16px;border:2px solid var(--border);border-radius:10px;font-size:16px;outline:none;font-family:inherit;background:var(--surface);transition:border .15s}
+.search-input:focus{border-color:var(--primary)}
+.search-results{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 10px 10px;max-height:250px;overflow-y:auto;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.search-item{padding:12px 16px;border-bottom:1px solid #f0f0f0;cursor:pointer;font-size:14px;display:flex;flex-direction:column;gap:2px}
+.search-item:active{background:var(--primary-light)}
+.search-item-code{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--accent);font-size:13px}
+.search-item-name{font-weight:500}
+
+/* Selected product display */
+.selected-product{background:var(--primary-light);border:2px solid var(--primary);border-radius:10px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
+.selected-product-info{flex:1}
+.selected-product-code{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--primary);font-size:15px}
+.selected-product-name{font-size:14px;color:var(--text);margin-top:2px}
+.clear-btn{width:36px;height:36px;border-radius:50%;border:none;background:rgba(196,54,44,.1);color:var(--danger);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+
+/* Quantity input */
+.qty-row{display:flex;align-items:center;gap:10px}
+.qty-btn{width:52px;height:52px;border-radius:12px;border:2px solid var(--border);background:var(--surface);font-size:24px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit;transition:all .1s;-webkit-appearance:none}
+.qty-btn:active{background:var(--primary-light);border-color:var(--primary);transform:scale(.9)}
+.qty-input{flex:1;text-align:center;font-size:32px;font-weight:700;font-family:'JetBrains Mono',monospace;padding:10px;border:2px solid var(--border);border-radius:12px;outline:none;background:var(--surface)}
+.qty-input:focus{border-color:var(--primary)}
+
+/* Note input */
+.note-input{width:100%;padding:12px 16px;border:2px solid var(--border);border-radius:10px;font-size:15px;outline:none;font-family:inherit;resize:none;height:50px}
+.note-input:focus{border-color:var(--primary)}
+
+/* Submit button */
+.submit-btn{width:100%;padding:18px;border:none;border-radius:12px;font-size:18px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:8px;-webkit-appearance:none}
+.submit-btn.ready{background:var(--primary);color:#fff}
+.submit-btn.ready:active{background:var(--primary-dark);transform:scale(.98)}
+.submit-btn.disabled{background:var(--border);color:var(--muted);pointer-events:none}
+
+/* Success overlay */
+.success-overlay{position:fixed;inset:0;background:rgba(26,107,78,.95);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;animation:fadeIn .2s;color:#fff}
+.success-icon{font-size:80px;animation:checkmark .4s}
+.success-title{font-size:24px;font-weight:700;margin-top:20px}
+.success-detail{font-size:14px;opacity:.8;margin-top:8px;text-align:center;line-height:1.6}
+.success-btn{margin-top:30px;padding:14px 40px;border:2px solid #fff;border-radius:10px;background:transparent;color:#fff;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit}
+.success-btn:active{background:rgba(255,255,255,.2)}
+
+/* Today's records */
+.record-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.record-left{flex:1}
+.record-code{font-family:'JetBrains Mono',monospace;font-weight:600;font-size:13px;color:var(--accent)}
+.record-name{font-size:13px;margin-top:1px}
+.record-right{text-align:right}
+.record-qty{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--primary)}
+.record-meta{font-size:11px;color:var(--muted)}
+
+.badge{display:inline-flex;padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600}
+.badge-success{background:var(--primary-light);color:var(--primary)}
+.badge-count{background:var(--primary);color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+
+.tab-bar{display:flex;gap:0;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:56px;z-index:9}
+.tab{flex:1;padding:12px;text-align:center;font-size:14px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent;color:var(--muted);transition:all .15s;font-family:inherit;border:none;background:none}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+
+.empty{text-align:center;padding:30px;color:var(--muted);font-size:14px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin:30px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const SUPABASE_URL="https://ndyyicskqplybpdtbksm.supabase.co";
+const SUPABASE_ANON_KEY="sb_publishable_YPtz-9UqNdO1KyeFdPNrQw_KZH3Wt9a";
+
+async function supaFetch(table,{method="GET",body,query=""}={}){
+  const url=`${SUPABASE_URL}/rest/v1/${table}${query?"?"+query:""}`;
+  const headers={apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${SUPABASE_ANON_KEY}`,"Content-Type":"application/json",...(method==="POST"||method==="PATCH"?{Prefer:"return=representation"}:{})};
+  const res=await fetch(url,{method,headers,body:body?JSON.stringify(body):undefined});
+  if(!res.ok)throw new Error(await res.text());
+  const text=await res.text();return text?JSON.parse(text):null;
+}
+
+const{useState,useEffect,useCallback,useRef}=React;
+
+function App(){
+  const[tab,setTab]=useState("input"); // input | today
+  const[products,setProducts]=useState([]);
+  const[staff,setStaff]=useState([]);
+  const[todayRecords,setTodayRecords]=useState([]);
+  const[loading,setLoading]=useState(true);
+
+  // Form state
+  const[selectedWorkers,setSelectedWorkers]=useState([]);
+  const[selectedProduct,setSelectedProduct]=useState(null);
+  const[qty,setQty]=useState(1);
+  const[note,setNote]=useState("");
+  const[search,setSearch]=useState("");
+  const[showSearch,setShowSearch]=useState(false);
+  const[submitting,setSubmitting]=useState(false);
+  const[showSuccess,setShowSuccess]=useState(null);
+
+  const searchRef=useRef(null);
+  const today=new Date().toISOString().slice(0,10);
+  const todayDisplay=today.replace(/-/g,"/");
+
+  const loadData=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const[prods,staffList]=await Promise.all([
+        supaFetch("products",{query:"select=*&is_active=eq.true&order=product_id"}),
+        supaFetch("staff",{query:"select=*&is_active=eq.true&order=name"})
+      ]);
+      setProducts(prods||[]);
+      setStaff(staffList||[]);
+    }catch(e){console.error(e);}
+    setLoading(false);
+  },[]);
+
+  const loadTodayRecords=useCallback(async()=>{
+    try{
+      const orders=await supaFetch("assembly_orders",{query:`select=*&order_date=eq.${today}&order=created_at.desc`});
+      if(!orders||!orders.length){setTodayRecords([]);return;}
+      const orderIds=orders.map(o=>o.id);
+      const items=await supaFetch("assembly_items",{query:`select=*,products(product_id,product_name),assembly_orders(order_no,order_date)&order_id=in.(${orderIds.join(",")})&order=created_at.desc`});
+      setTodayRecords(items||[]);
+    }catch(e){console.error(e);}
+  },[today]);
+
+  useEffect(()=>{loadData();loadTodayRecords();},[loadData,loadTodayRecords]);
+
+  // Close search dropdown on outside click
+  useEffect(()=>{
+    const h=e=>{if(searchRef.current&&!searchRef.current.contains(e.target))setShowSearch(false);};
+    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
+  },[]);
+
+  const assemblers=staff.filter(s=>s.role==="assembler"||s.role==="general");
+
+  const filteredProducts=products.filter(p=>{
+    if(!search)return false;
+    const s=search.toLowerCase();
+    return p.product_id.toLowerCase().includes(s)||p.product_name.toLowerCase().includes(s);
+  }).slice(0,30);
+
+  const canSubmit=selectedWorkers.length>0&&selectedProduct&&qty>0;
+  const selectedWorker=selectedWorkers.join(",");
+
+  const handleSubmit=async()=>{
+    if(!canSubmit||submitting)return;
+    setSubmitting(true);
+    try{
+      // Find or create today's assembly order for this worker
+      const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:today,status:"draft"}});
+      await supaFetch("assembly_items",{method:"POST",body:{
+        order_id:order.id,
+        product_id:selectedProduct.id,
+        qty:parseInt(qty),
+        assembler:selectedWorker,
+        note:note||null
+      }});
+      setShowSuccess({
+        orderNo:order.order_no,
+        product:selectedProduct,
+        qty:parseInt(qty),
+        worker:selectedWorker
+      });
+      // Reset form (keep workers selected)
+      setSelectedProduct(null);setQty(1);setNote("");setSearch("");
+      loadTodayRecords();
+    }catch(e){alert("提交失敗: "+e.message);}
+    setSubmitting(false);
+  };
+
+  const todayTotal=todayRecords.reduce((sum,r)=>sum+r.qty,0);
+
+  if(loading)return <div className="app"><div className="header"><div className="header-title">⚙ 組裝填報</div></div><div className="spinner"/></div>;
+
+  return <div className="app">
+    {/* Success overlay */}
+    {showSuccess&&<div className="success-overlay">
+      <div className="success-icon">✓</div>
+      <div className="success-title">提交成功！</div>
+      <div className="success-detail">
+        單號：{showSuccess.orderNo}<br/>
+        {showSuccess.product.product_id} - {showSuccess.product.product_name}<br/>
+        數量：{showSuccess.qty} · 組裝人員：{showSuccess.worker}
+      </div>
+      <button className="success-btn" onClick={()=>setShowSuccess(null)}>繼續填報</button>
+    </div>}
+
+    <div className="header">
+      <div>
+        <div className="header-title">⚙ 組裝填報</div>
+        <div className="header-sub">I-Reporter 現場作業系統</div>
+      </div>
+      <div className="header-date">{todayDisplay}</div>
+    </div>
+
+    <div className="tab-bar">
+      <button className={`tab ${tab==="input"?"active":""}`} onClick={()=>setTab("input")}>📝 填報</button>
+      <button className={`tab ${tab==="today"?"active":""}`} onClick={()=>{setTab("today");loadTodayRecords();}}>📋 今日紀錄 <span className="badge-count">{todayRecords.length}</span></button>
+    </div>
+
+    <div className="content">
+      {tab==="input"&&<>
+        {/* Step 1: Select Worker */}
+        <div className="section">
+          <div className="section-title">👤 組裝人員（可複選） {selectedWorkers.length>0&&<span className="badge badge-success">{selectedWorkers.join("、")}</span>}</div>
+          <div className="worker-grid">
+            {assemblers.map(s=>(
+              <button key={s.id} className={`worker-btn ${selectedWorkers.includes(s.name)?"selected":""}`} onClick={()=>setSelectedWorkers(prev=>prev.includes(s.name)?prev.filter(n=>n!==s.name):[...prev,s.name])}>{s.name}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Step 2: Select Product */}
+        <div className="section">
+          <div className="section-title">📦 產品</div>
+          {selectedProduct?
+            <div className="selected-product">
+              <div className="selected-product-info">
+                <div className="selected-product-code">{selectedProduct.product_id}</div>
+                <div className="selected-product-name">{selectedProduct.product_name}</div>
+              </div>
+              <button className="clear-btn" onClick={()=>{setSelectedProduct(null);setSearch("");}}>✕</button>
+            </div>
+          :
+            <div className="search-box" ref={searchRef}>
+              <input className="search-input" placeholder="🔍 輸入產品編號或名稱..." value={search} onChange={e=>{setSearch(e.target.value);setShowSearch(true);}} onFocus={()=>setShowSearch(true)}/>
+              {showSearch&&search&&<div className="search-results">
+                {filteredProducts.length===0?<div style={{padding:16,textAlign:"center",color:"var(--muted)"}}>找不到產品</div>:
+                filteredProducts.map(p=>(
+                  <div key={p.id} className="search-item" onClick={()=>{setSelectedProduct(p);setShowSearch(false);setSearch("");}}>
+                    <span className="search-item-code">{p.product_id}</span>
+                    <span className="search-item-name">{p.product_name}</span>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          }
+        </div>
+
+        {/* Step 3: Quantity */}
+        <div className="section">
+          <div className="section-title">🔢 組裝數量</div>
+          <div className="qty-row">
+            <button className="qty-btn" onClick={()=>setQty(Math.max(1,qty-10))}>-10</button>
+            <button className="qty-btn" onClick={()=>setQty(Math.max(1,qty-1))}>-</button>
+            <input type="number" className="qty-input" value={qty} onChange={e=>setQty(Math.max(0,parseInt(e.target.value)||0))} min="0"/>
+            <button className="qty-btn" onClick={()=>setQty(qty+1)}>+</button>
+            <button className="qty-btn" onClick={()=>setQty(qty+10)}>+10</button>
+          </div>
+          <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+            {[10,20,30,50,100,120,150,200].map(n=>(
+              <button key={n} style={{padding:"6px 12px",borderRadius:6,border:"1px solid var(--border)",background:qty===n?"var(--primary-light)":"var(--surface)",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'JetBrains Mono',monospace"}} onClick={()=>setQty(n)}>{n}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Step 4: Note */}
+        <div className="section">
+          <div className="section-title">📝 備註（選填）</div>
+          <textarea className="note-input" value={note} onChange={e=>setNote(e.target.value)} placeholder="有什麼需要備註的..."/>
+        </div>
+
+        {/* Submit */}
+        <button className={`submit-btn ${canSubmit?"ready":"disabled"}`} onClick={handleSubmit} disabled={submitting}>
+          {submitting?"提交中...":"✓ 確認提交"}
+        </button>
+        {!canSubmit&&<div style={{textAlign:"center",fontSize:12,color:"var(--muted)",marginTop:8}}>
+          {!selectedWorker?"請先選擇組裝人員（可複選）":!selectedProduct?"請選擇產品":"請輸入數量"}
+        </div>}
+      </>}
+
+      {tab==="today"&&<>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <span style={{fontSize:13,color:"var(--muted)"}}>{todayDisplay} · 共 {todayRecords.length} 筆</span>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:18,color:"var(--primary)"}}>合計 {todayTotal}</span>
+        </div>
+        {todayRecords.length===0?<div className="empty">今日尚無組裝紀錄</div>:
+        todayRecords.map((r,i)=>(
+          <div key={r.id||i} className="record-card">
+            <div className="record-left">
+              <div className="record-code">{r.products?.product_id}</div>
+              <div className="record-name">{r.products?.product_name}</div>
+            </div>
+            <div className="record-right">
+              <div className="record-qty">{r.qty}</div>
+              <div className="record-meta">{r.assembler||"-"}{r.note?` · ${r.note}`:""}</div>
+            </div>
+          </div>
+        ))}
+      </>}
+    </div>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
