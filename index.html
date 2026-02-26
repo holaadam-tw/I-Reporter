@@ -105,6 +105,7 @@ select.input{cursor:pointer}
 .staff-add-btn:hover{background:var(--primary);color:#fff}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:500;display:flex;align-items:center;justify-content:center}
 .modal{background:#fff;border-radius:12px;padding:24px;max-width:420px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,.2);animation:fadeIn .15s}
+.modal-wide{max-width:720px}
 .modal-title{font-size:16px;font-weight:700;margin-bottom:16px}
 .modal-field{margin-bottom:12px}
 .modal-field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
@@ -232,6 +233,50 @@ function EditQtyModal({show,onClose,onSave,item,tableName,staff,onAddStaff}){
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}><div className="modal-title">✏️ 修改數量</div><div style={{background:"#f8f7f4",borderRadius:6,padding:10,marginBottom:14,fontSize:12}}><div><strong>單號：</strong>{item.orderNo}</div><div><strong>產品：</strong>{item.productCode} - {item.productName}</div></div><div className="modal-field"><label>原始數量</label><div style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:18,color:"var(--muted)"}}>{item.qty}</div></div><div className="modal-field"><label>新數量 <span style={{color:"var(--danger)"}}>*</span></label><input type="number" className="input" style={{width:"100%",fontSize:16,fontWeight:700}} min="0" value={newQty} onChange={e=>setNewQty(e.target.value)} autoFocus/></div><div className="modal-field"><label>修改人員 <span style={{color:"var(--danger)"}}>*</span></label><StaffSelect staff={staff} value={editedBy} onChange={setEditedBy} onAdd={onAddStaff} style={{width:"100%"}}/></div><div className="modal-field"><label>修改原因 <span style={{color:"var(--danger)"}}>*</span></label><input className="input" style={{width:"100%"}} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例：數量計算錯誤、補數、客戶要求變更..." onKeyDown={e=>e.key==="Enter"&&save()}/></div><div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>修改日期：{new Date().toISOString().slice(0,10)} · 所有修改記錄將被保存</div><div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button className="btn btn-secondary" onClick={onClose}>取消</button><button className="btn btn-primary" onClick={save}>確認修改</button></div></div></div>;
 }
 
+function OrderDetailModal({show,orderNo,orderType,onClose}){
+  const[loading,setLoading]=useState(false);const[order,setOrder]=useState(null);const[items,setItems]=useState([]);
+  useEffect(()=>{if(!show||!orderNo)return;setLoading(true);setOrder(null);setItems([]);
+    (async()=>{try{
+      if(orderType==="assembly"){
+        const orders=await supaFetch("assembly_orders",{query:`select=*&order_no=eq.${encodeURIComponent(orderNo)}`});
+        if(orders&&orders.length>0){setOrder(orders[0]);const its=await supaFetch("assembly_items",{query:`select=*,products(product_id,product_name)&order_id=eq.${orders[0].id}&order=created_at`});setItems(its||[]);}
+      }else{
+        const orders=await supaFetch("packaging_orders",{query:`select=*&order_no=eq.${encodeURIComponent(orderNo)}`});
+        if(orders&&orders.length>0){setOrder(orders[0]);const its=await supaFetch("packaging_items",{query:`select=*,products(product_id,product_name),customers(name)&order_id=eq.${orders[0].id}&order=created_at`});setItems(its||[]);}
+      }
+    }catch(e){console.error(e);}finally{setLoading(false);}})();
+  },[show,orderNo,orderType]);
+  if(!show)return null;
+  const isAsm=orderType==="assembly";
+  const totalQty=items.reduce((s,it)=>s+(it.qty||0),0);
+  return <div className="modal-overlay" onClick={onClose}><div className="modal modal-wide" onClick={e=>e.stopPropagation()}>
+    <div className="modal-title">{isAsm?"🔧 組裝單":"📦 包裝出貨單"} — {orderNo}</div>
+    {loading?<div className="spinner"/>:!order?<div style={{color:"var(--muted)",padding:20,textAlign:"center"}}>找不到單號 {orderNo}</div>:<>
+      <div style={{background:"#f8f7f4",borderRadius:6,padding:10,marginBottom:14,fontSize:12,display:"flex",gap:20}}>
+        <div><strong>單號：</strong>{order.order_no}</div>
+        <div><strong>日期：</strong>{order.order_date}</div>
+        <div><strong>狀態：</strong>{order.status==="approved"?"已核准":"草稿"}</div>
+        <div><strong>合計：</strong><span style={{fontWeight:700}}>{totalQty}</span></div>
+      </div>
+      {items.length===0?<div style={{color:"var(--muted)",padding:20,textAlign:"center"}}>無明細項目</div>:
+      <div className="table-wrap" style={{maxHeight:400,overflow:"auto"}}><table>
+        <thead><tr><th>#</th><th>產品編號</th><th>產品名稱</th><th style={{textAlign:"right"}}>數量</th>
+          {isAsm?<><th>組裝人員</th><th>入庫日期</th></>:<><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th></>}
+          <th>備註</th></tr></thead>
+        <tbody>{items.map((it,i)=><tr key={it.id}>
+          <td style={{color:"var(--muted)"}}>{i+1}</td>
+          <td><code style={{fontWeight:600}}>{it.products?.product_id||"-"}</code></td>
+          <td>{it.products?.product_name||"-"}</td>
+          <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,textAlign:"right"}}>{it.qty}</td>
+          {isAsm?<><td>{it.assembler||"-"}</td><td>{it.warehouse_date||"-"}</td></>:<><td>{it.is_stock?"庫存":it.customers?.name||"-"}</td><td>{it.tester||"-"}</td><td>{it.inspector||"-"}</td><td>{it.assembly_date||"-"}</td></>}
+          <td>{it.note||"-"}</td>
+        </tr>)}</tbody>
+      </table></div>}
+    </>}
+    <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}><button className="btn btn-secondary" onClick={onClose}>關閉</button></div>
+  </div></div>;
+}
+
 function ProductSearch({products,value,onChange,style}){
   const[search,setSearch]=useState("");const[open,setOpen]=useState(false);const ref=useRef(null);
   const selected=products.find(p=>p.id===value);
@@ -240,8 +285,9 @@ function ProductSearch({products,value,onChange,style}){
   return <div className="search-select" ref={ref} style={style}><input className="input" style={{width:"100%"}} placeholder={selected?`${selected.product_id} - ${selected.product_name}`:"🔍 搜尋產品..."} value={open?search:""} onFocus={()=>{setOpen(true);setSearch("");}} onChange={e=>{setSearch(e.target.value);setOpen(true);}}/>{open&&<div className="search-dropdown">{filtered.length===0&&<div style={{padding:10,color:"var(--muted)",textAlign:"center"}}>無符合產品</div>}{filtered.map(p=><div key={p.id} className="search-dropdown-item" onClick={()=>{onChange(p.id);setOpen(false);setSearch("");}}><code>{p.product_id}</code>{p.product_name}</div>)}</div>}</div>;
 }
 
-function ReconciliationTab({products,customers,staff,toast,reloadStaff,onNavigate}){
+function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[data,setData]=useState([]);const[loading,setLoading]=useState(true);
+  const[orderModal,setOrderModal]=useState({show:false,orderNo:null,orderType:null});
   const today=new Date().toISOString().slice(0,10);const d10=new Date(Date.now()-10*86400000).toISOString().slice(0,10);const d5=new Date(Date.now()+5*86400000).toISOString().slice(0,10);
   const[dateFrom,setDateFrom]=useState(d10);const[dateTo,setDateTo]=useState(d5);
   const[filter,setFilter]=useState("all");const[sortCol,setSortCol]=useState("status");const[sortDir,setSortDir]=useState("asc");
@@ -253,10 +299,10 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff,onNavigat
   const[staffModal,setStaffModal]=useState({show:false,role:"general"});
   const[editModal,setEditModal]=useState({show:false,item:null,tableName:""});
 
-  const load=useCallback(async()=>{setLoading(true);try{if(dateFrom&&dateTo){try{const rpcData=await supaRpc("fn_reconcile_by_date_range",{p_date_from:dateFrom,p_date_to:dateTo});setData(rpcData||[]);}catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query="select=*";if(dateFrom)query+=`&order_date=gte.${dateFrom}`;if(dateTo)query+=`&order_date=lte.${dateTo}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}else{let query="select=*";if(dateFrom)query+=`&order_date=gte.${dateFrom}`;if(dateTo)query+=`&order_date=lte.${dateTo}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
+  const load=useCallback(async()=>{setLoading(true);try{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);try{const rpcData=await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt});setData(rpcData||[]);}catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
 
-  const searchByDate=async()=>{if(!dateFrom||!dateTo)return;setLoading(true);try{setData(await supaRpc("fn_reconcile_by_date_range",{p_date_from:dateFrom,p_date_to:dateTo})||[]);}catch(e){console.error(e);load();}setLoading(false);};
+  const searchByDate=async()=>{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);setLoading(true);try{setData(await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt})||[]);}catch(e){console.error(e);load();}setLoading(false);};
 
   const loadDetail=async(productId,productCode,orderDate)=>{
     const rowKey=productCode+"_"+(orderDate||"all");
@@ -312,6 +358,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff,onNavigat
   return <div>
     <AddStaffModal show={staffModal.show} defaultRole={staffModal.role} onClose={()=>setStaffModal({show:false,role:"general"})} onSave={addStaff}/>
     <EditQtyModal show={editModal.show} item={editModal.item} tableName={editModal.tableName} staff={staff} onClose={()=>setEditModal({show:false,item:null,tableName:""})} onSave={handleEditQty} onAddStaff={()=>setStaffModal({show:true,role:"general"})}/>
+    <OrderDetailModal show={orderModal.show} orderNo={orderModal.orderNo} orderType={orderModal.orderType} onClose={()=>setOrderModal({show:false,orderNo:null,orderType:null})}/>
     <div className="filter-bar">
       <span className="filter-label">日期範圍：</span>
       <input type="date" className="input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
@@ -351,8 +398,8 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff,onNavigat
             <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
           {isExpanded&&<tr className="expand-row"><td colSpan={9}><div className="expand-content">
-            <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th>數量</th><th>組裝人員</th><th>入庫日期</th><th>備註</th><th style={{width:50}}>操作</th></tr></thead><tbody>{expandData.asm.map(a=><tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();if(onNavigate)onNavigate("assembly",a.assembly_orders?.order_no);}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td style={{fontWeight:700}}>{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td>{a.note||"-"}</td><td><button className="btn-edit" onClick={e=>{e.stopPropagation();setEditModal({show:true,tableName:"assembly_items",item:{id:a.id,qty:a.qty,orderNo:a.assembly_orders?.order_no,productCode:a.products?.product_id,productName:a.products?.product_name}});}}>修改</button></td></tr>)}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無組裝記錄</div>}</div>
-            <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>備註</th><th style={{width:50}}>操作</th></tr></thead><tbody>{expandData.pkg.map(p=><tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();if(onNavigate)onNavigate("packaging",p.packaging_orders?.order_no);}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td style={{fontWeight:700}}>{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td>{p.note||"-"}</td><td><button className="btn-edit" onClick={e=>{e.stopPropagation();setEditModal({show:true,tableName:"packaging_items",item:{id:p.id,qty:p.qty,orderNo:p.packaging_orders?.order_no,productCode:p.products?.product_id,productName:p.products?.product_name}});}}>修改</button></td></tr>)}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無包裝記錄</div>}</div>
+            <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th>數量</th><th>組裝人員</th><th>入庫日期</th><th>備註</th><th style={{width:50}}>操作</th></tr></thead><tbody>{expandData.asm.map(a=><tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();setOrderModal({show:true,orderNo:a.assembly_orders?.order_no,orderType:"assembly"});}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td style={{fontWeight:700}}>{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td>{a.note||"-"}</td><td><button className="btn-edit" onClick={e=>{e.stopPropagation();setEditModal({show:true,tableName:"assembly_items",item:{id:a.id,qty:a.qty,orderNo:a.assembly_orders?.order_no,productCode:a.products?.product_id,productName:a.products?.product_name}});}}>修改</button></td></tr>)}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無組裝記錄</div>}</div>
+            <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>備註</th><th style={{width:50}}>操作</th></tr></thead><tbody>{expandData.pkg.map(p=><tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();setOrderModal({show:true,orderNo:p.packaging_orders?.order_no,orderType:"packaging"});}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td style={{fontWeight:700}}>{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td>{p.note||"-"}</td><td><button className="btn-edit" onClick={e=>{e.stopPropagation();setEditModal({show:true,tableName:"packaging_items",item:{id:p.id,qty:p.qty,orderNo:p.packaging_orders?.order_no,productCode:p.products?.product_id,productName:p.products?.product_name}});}}>修改</button></td></tr>)}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無包裝記錄</div>}</div>
             {needsAction&&!supplementing&&<div style={{display:"flex",gap:8,marginTop:8}}><button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button><button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,order_date:r.order_date,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button></div>}
             {supplementing&&supplementing.product_code===r.product_code&&(<div className="supplement-box"><div className="supplement-title">{supplementing.type==="asm"?"🔧 補建組裝單":"📦 補建包裝出貨單"} — {r.product_code} {r.product_name}</div><div className="form-row"><span className="filter-label">數量：</span><input type="number" className="input" style={{width:80}} min="1" value={suppForm.qty} onChange={e=>setSuppForm({...suppForm,qty:e.target.value})}/>{supplementing.type==="asm"&&<><span className="filter-label">組裝人員：</span><StaffSelect staff={staff} value={suppForm.assembler} onChange={v=>setSuppForm({...suppForm,assembler:v})} onAdd={()=>setStaffModal({show:true,role:"assembler"})} roleFilter="assembler" multi style={{width:180}}/><span className="filter-label">組裝日期：</span><input type="date" className="input" style={{width:140}} value={suppForm.order_date||""} onChange={e=>setSuppForm({...suppForm,order_date:e.target.value})}/><span className="filter-label">入庫日期：</span><input type="date" className="input" style={{width:140}} value={suppForm.assembly_date} onChange={e=>setSuppForm({...suppForm,assembly_date:e.target.value})}/></>}{supplementing.type==="pkg"&&<><span className="filter-label">客戶：</span><select className="input" style={{width:110}} value={suppForm.customer_id} onChange={e=>setSuppForm({...suppForm,customer_id:e.target.value})}><option value="">庫存</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><span className="filter-label">測試人員：</span><StaffSelect staff={staff} value={suppForm.tester} onChange={v=>setSuppForm({...suppForm,tester:v})} onAdd={()=>setStaffModal({show:true,role:"tester"})} roleFilter="tester" multi style={{width:160}}/><span className="filter-label">檢驗人員：</span><StaffSelect staff={staff} value={suppForm.inspector} onChange={v=>setSuppForm({...suppForm,inspector:v})} onAdd={()=>setStaffModal({show:true,role:"inspector"})} roleFilter="inspector" style={{width:130}}/></>}</div><div className="form-row" style={{marginTop:6}}><span className="filter-label">備註：</span><input className="input" style={{flex:1}} value={suppForm.note} onChange={e=>setSuppForm({...suppForm,note:e.target.value})} placeholder="補單原因"/><button className="btn btn-primary" onClick={submitSupplement}>確認補單</button><button className="btn btn-secondary" onClick={()=>setSupplementing(null)}>取消</button></div></div>)}
           </div></td></tr>}
@@ -363,12 +410,11 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff,onNavigat
   </div>;
 }
 
-function AssemblyTab({products,staff,toast,reloadStaff,pendingOrderNo,onNavDone}){
+function AssemblyTab({products,staff,toast,reloadStaff}){
   const[orders,setOrders]=useState([]);const[items,setItems]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);const[showForm,setShowForm]=useState(false);const[orderDate,setOrderDate]=useState(new Date().toISOString().slice(0,10));const[newItems,setNewItems]=useState([{product_id:"",qty:1,assembler:"",warehouse_date:"",note:""}]);
   const[staffModal,setStaffModal]=useState(false);const[editModal,setEditModal]=useState({show:false,item:null});
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetch("assembly_orders",{query:"select=*&order=order_date.desc,created_at.desc"})||[]);}catch(e){}setLoading(false);},[]);
   useEffect(()=>{load();},[load]);
-  useEffect(()=>{if(pendingOrderNo&&orders.length>0){const match=orders.find(o=>o.order_no===pendingOrderNo);if(match){loadItems(match.id);if(onNavDone)onNavDone();}}},[pendingOrderNo,orders]);
   const loadItems=async id=>{try{setItems(await supaFetch("assembly_items",{query:`select=*,products(product_id,product_name)&order_id=eq.${id}`})||[]);setSel(id);}catch(e){}};
   const create=async()=>{const valid=newItems.filter(it=>it.product_id&&it.qty>0);if(!valid.length){toast("請至少新增一個產品","error");return;}try{const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:orderDate,status:"draft"}});for(const it of valid)await supaFetch("assembly_items",{method:"POST",body:{order_id:order.id,product_id:it.product_id,qty:parseInt(it.qty),assembler:it.assembler,warehouse_date:it.warehouse_date||null,note:it.note}});toast("組裝單建立成功！單號: "+order.order_no,"success");setShowForm(false);setNewItems([{product_id:"",qty:1,assembler:"",warehouse_date:"",note:""}]);load();}catch(e){toast("建立失敗: "+e.message,"error");}};
   const approveOrder=async(id)=>{try{await supaPatch("assembly_orders",`id=eq.${id}`,{status:"approved"});toast("已核准","success");load();}catch(e){toast("核准失敗: "+e.message,"error");}};
@@ -381,12 +427,11 @@ function AssemblyTab({products,staff,toast,reloadStaff,pendingOrderNo,onNavDone}
   {loading?<div className="spinner"/>:<div className="split-view"><div className="split-left">{orders.map(o=><div key={o.id} className={`order-card ${sel===o.id?"selected":""}`} onClick={()=>loadItems(o.id)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><code className="order-no">{o.order_no}</code><Badge type={sC[o.status]}>{sL[o.status]}</Badge></div><div className="order-date">📅 {o.order_date}</div></div>)}{!orders.length&&<div style={{textAlign:"center",padding:30,color:"var(--muted)"}}>尚無組裝單</div>}</div>{sel&&<div className="split-right">{selOrder&&selOrder.status==="draft"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-primary btn-sm" style={{background:"var(--success)"}} onClick={()=>approveOrder(sel)}>✓ 核准</button><button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>{if(confirm("確定要刪除此組裝單？")){(async()=>{try{await supaDelete("assembly_items",`order_id=eq.${sel}`);await supaDelete("assembly_orders",`id=eq.${sel}`);toast("已刪除","success");setSel(null);load();}catch(e){toast("刪除失敗: "+e.message,"error");}})();}}}>🗑 刪除</button></div>}{selOrder&&selOrder.status==="approved"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-secondary btn-sm" onClick={()=>revertDraft(sel)}>↩ 退回草稿</button></div>}<div className="table-wrap"><table><thead><tr>{["產品編號","產品名稱","數量","組裝人員","入庫日期","備註",""].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{items.map(it=><tr key={it.id}><td><code style={{fontWeight:600}}>{it.products?.product_id}</code></td><td>{it.products?.product_name}</td><td style={{fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{it.qty}</td><td>{it.assembler||"-"}</td><td>{it.warehouse_date||"-"}</td><td>{it.note||"-"}</td><td><button className="btn-edit" onClick={()=>setEditModal({show:true,item:{id:it.id,qty:it.qty,orderNo:selOrder?.order_no,productCode:it.products?.product_id,productName:it.products?.product_name}})}>修改</button></td></tr>)}</tbody></table></div></div>}</div>}</div>;
 }
 
-function PackagingTab({products,customers,staff,toast,reloadStaff,pendingOrderNo,onNavDone}){
+function PackagingTab({products,customers,staff,toast,reloadStaff}){
   const[orders,setOrders]=useState([]);const[items,setItems]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);const[showForm,setShowForm]=useState(false);const[orderDate,setOrderDate]=useState(new Date().toISOString().slice(0,10));const[newItems,setNewItems]=useState([{product_id:"",qty:1,customer_id:"",tester:"",inspector:"",assembly_date:"",note:""}]);
   const[staffModal,setStaffModal]=useState({show:false,role:"tester"});const[editModal,setEditModal]=useState({show:false,item:null});
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetch("packaging_orders",{query:"select=*&order=order_date.desc,created_at.desc"})||[]);}catch(e){}setLoading(false);},[]);
   useEffect(()=>{load();},[load]);
-  useEffect(()=>{if(pendingOrderNo&&orders.length>0){const match=orders.find(o=>o.order_no===pendingOrderNo);if(match){loadItems(match.id);if(onNavDone)onNavDone();}}},[pendingOrderNo,orders]);
   const loadItems=async id=>{try{setItems(await supaFetch("packaging_items",{query:`select=*,products(product_id,product_name),customers(name)&order_id=eq.${id}`})||[]);setSel(id);}catch(e){console.error(e);}};
   const create=async()=>{const valid=newItems.filter(it=>it.product_id&&it.qty>0);if(!valid.length){toast("請至少新增一個產品","error");return;}try{const[order]=await supaFetch("packaging_orders",{method:"POST",body:{order_date:orderDate,status:"draft"}});for(const it of valid)await supaFetch("packaging_items",{method:"POST",body:{order_id:order.id,product_id:it.product_id,qty:parseInt(it.qty),customer_id:it.customer_id||null,is_stock:!it.customer_id,tester:it.tester,inspector:it.inspector,assembly_date:it.assembly_date||null,note:it.note}});toast("包裝出貨入庫單建立成功！單號: "+order.order_no,"success");setShowForm(false);setNewItems([{product_id:"",qty:1,customer_id:"",tester:"",inspector:"",assembly_date:"",note:""}]);load();}catch(e){toast("建立失敗: "+e.message,"error");}};
   const handleEdit=async({recordId,tableName,oldQty,newQty,editedBy,reason})=>{try{await supaFetch("edit_logs",{method:"POST",body:{table_name:tableName,record_id:recordId,field_name:"qty",old_value:String(oldQty),new_value:String(newQty),edited_by:editedBy,reason}});await supaPatch(tableName,`id=eq.${recordId}`,{qty:newQty});toast(`數量已修改: ${oldQty} → ${newQty}`,"success");setEditModal({show:false,item:null});if(sel)loadItems(sel);}catch(e){toast("修改失敗: "+e.message,"error");}};
@@ -453,9 +498,6 @@ function App(){
   const[tab,setTab]=useState("reconciliation");const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[staff,setStaff]=useState([]);
   const[toastMsg,setToastMsg]=useState(null);const[toastType,setToastType]=useState("success");
   const toast=(msg,type="success")=>{setToastMsg(msg);setToastType(type);setTimeout(()=>setToastMsg(null),4000);};
-  const[pendingNav,setPendingNav]=useState(null);
-  const navigateToOrder=(tabKey,orderNo)=>{setPendingNav({orderNo});setTab(tabKey);};
-
   const loadProducts=useCallback(async()=>{try{setProducts(await supaFetchAll("products","select=*&is_active=eq.true&order=product_id")||[]);}catch(e){}},[]);
   const loadCustomers=useCallback(async()=>{try{setCustomers(await supaFetch("customers",{query:"select=*&is_active=eq.true&order=name"})||[]);}catch(e){}},[]);
   const loadStaff=useCallback(async()=>{try{setStaff(await supaFetch("staff",{query:"select=*&is_active=eq.true&order=name"})||[]);}catch(e){}},[]);
@@ -466,9 +508,9 @@ function App(){
     <div className="header"><div className="header-inner"><div style={{display:"flex",alignItems:"center",gap:12}}><div className="header-logo">⚙</div><div><div className="header-title">I-Reporter</div><div className="header-sub">成品組裝 × 包裝入庫 × 測試 核對系統</div></div></div><div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>v1.5 · {products.length} products · {staff.length} staff</div></div></div>
     <div className="tab-bar"><div className="tab-bar-inner">{TABS.map(t=><button key={t.key} className={`tab-btn ${tab===t.key?"active":""}`} onClick={()=>setTab(t.key)}><span>{t.icon}</span>{t.label}</button>)}</div></div>
     <div className="content">
-      {tab==="reconciliation"&&<ReconciliationTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff} onNavigate={navigateToOrder}/>}
-      {tab==="assembly"&&<AssemblyTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff} pendingOrderNo={pendingNav?.orderNo} onNavDone={()=>setPendingNav(null)}/>}
-      {tab==="packaging"&&<PackagingTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff} pendingOrderNo={pendingNav?.orderNo} onNavDone={()=>setPendingNav(null)}/>}
+      {tab==="reconciliation"&&<ReconciliationTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
+      {tab==="assembly"&&<AssemblyTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
+      {tab==="packaging"&&<PackagingTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="testing"&&<TestingTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="products"&&<ProductsTab products={products} reload={loadProducts} toast={toast}/>}
       {tab==="staff"&&<StaffTab staff={staff} toast={toast} reloadStaff={loadStaff}/>}
