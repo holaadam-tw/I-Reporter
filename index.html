@@ -601,9 +601,9 @@ function EditLogsTab({toast}){
   const[page,setPage]=useState(0);const pageSize=50;const[total,setTotal]=useState(0);
 
   const load=useCallback(async()=>{setLoading(true);try{
-    let q=`select=*&order=created_at.desc&limit=${pageSize}&offset=${page*pageSize}`;
-    if(dateFrom)q+=`&created_at=gte.${dateFrom}T00:00:00`;
-    if(dateTo)q+=`&created_at=lte.${dateTo}T23:59:59`;
+    let q=`select=*&order=edited_at.desc&limit=${pageSize}&offset=${page*pageSize}`;
+    if(dateFrom)q+=`&edited_at=gte.${dateFrom}T00:00:00`;
+    if(dateTo)q+=`&edited_at=lte.${dateTo}T23:59:59`;
     if(tableFilter)q+=`&table_name=eq.${tableFilter}`;
     const data=await supaFetch("edit_logs",{query:q,headers:{"Prefer":"count=exact","Range-Unit":"items","Range":`${page*pageSize}-${(page+1)*pageSize-1}`}});
     setLogs(data||[]);
@@ -636,7 +636,7 @@ function EditLogsTab({toast}){
     <><div className="table-wrap"><table>
       <thead><tr><th>時間</th><th>操作者</th><th>資料表</th><th>記錄 ID</th><th>欄位</th><th>舊值</th><th>新值</th><th>原因</th></tr></thead>
       <tbody>{logs.map(l=><tr key={l.id}>
-        <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,whiteSpace:"nowrap"}}>{l.created_at?new Date(l.created_at).toLocaleString("zh-TW",{hour12:false}):"-"}</td>
+        <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,whiteSpace:"nowrap"}}>{l.edited_at?new Date(l.edited_at).toLocaleString("zh-TW",{hour12:false}):"-"}</td>
         <td style={{fontWeight:600}}>{l.edited_by||"-"}</td>
         <td><Badge type="info">{tableLabels[l.table_name]||l.table_name}</Badge></td>
         <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{l.record_id?l.record_id.slice(0,8)+"...":"-"}</td>
