@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>I-Reporter v1.5 | 成品組裝 × 包裝入庫 核對系統</title>
+<title>I-Reporter v1.6 | 成品組裝 × 包裝入庫 核對系統</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -493,10 +493,173 @@ function CustomersTab({customers,toast,reloadCustomers}){
   <div className="table-wrap"><table><thead><tr><th>客戶編碼</th><th>客戶名稱</th><th>聯絡人</th><th>電話</th><th>地址</th><th style={{width:120}}>操作</th></tr></thead><tbody>{filtered.map(c=><tr key={c.id}>{editingId===c.id?<><td><input className="input" style={{width:"100%",padding:"4px 8px"}} value={editForm.customer_code} onChange={e=>setEditForm({...editForm,customer_code:e.target.value})}/></td><td><input className="input" style={{width:"100%",padding:"4px 8px"}} value={editForm.name} onChange={e=>setEditForm({...editForm,name:e.target.value})} onKeyDown={e=>e.key==="Enter"&&saveEdit()}/></td><td><input className="input" style={{width:"100%",padding:"4px 8px"}} value={editForm.contact} onChange={e=>setEditForm({...editForm,contact:e.target.value})}/></td><td><input className="input" style={{width:"100%",padding:"4px 8px"}} value={editForm.phone} onChange={e=>setEditForm({...editForm,phone:e.target.value})}/></td><td><input className="input" style={{width:"100%",padding:"4px 8px"}} value={editForm.address} onChange={e=>setEditForm({...editForm,address:e.target.value})}/></td><td><div style={{display:"flex",gap:4}}><button className="btn-edit" style={{background:"var(--primary)",color:"#fff",border:"none"}} onClick={saveEdit}>儲存</button><button className="btn-edit" onClick={()=>setEditingId(null)}>取消</button></div></td></>:<><td><code style={{fontWeight:600}}>{c.customer_code||"-"}</code></td><td style={{fontWeight:600}}>{c.name}</td><td>{c.contact||"-"}</td><td>{c.phone||"-"}</td><td style={{fontSize:12}}>{c.address||"-"}</td><td><div style={{display:"flex",gap:4}}><button className="btn-edit" onClick={()=>startEdit(c)}>修改</button><button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)"}} onClick={()=>deleteCustomer(c)}>刪除</button></div></td></>}</tr>)}</tbody></table></div></div>;
 }
 
-const TABS=[{key:"reconciliation",label:"核對報告",icon:"📊"},{key:"assembly",label:"組裝單",icon:"🔧"},{key:"packaging",label:"包裝出貨入庫",icon:"📦"},{key:"testing",label:"測試表",icon:"🧪"},{key:"products",label:"產品主檔",icon:"🏭"},{key:"customers",label:"客戶管理",icon:"🏢"},{key:"staff",label:"人員管理",icon:"👥"}];
+// ============================================================
+// Dashboard
+// ============================================================
+function DashboardTab({toast,onNavigate}){
+  const today=new Date().toISOString().slice(0,10);
+  const[stats,setStats]=useState({asmQty:0,pkgQty:0,asmOrders:0,pkgOrders:0,anomalies:0});
+  const[weekData,setWeekData]=useState([]);
+  const[recentAnomalies,setRecentAnomalies]=useState([]);
+  const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{(async()=>{setLoading(true);try{
+    // today stats — parallel queries
+    const[asmItems,pkgItems,asmOrders,pkgOrders]=await Promise.all([
+      supaFetch("assembly_items",{query:`select=qty,assembly_orders!inner(order_date)&assembly_orders.order_date=eq.${today}`}),
+      supaFetch("packaging_items",{query:`select=qty,packaging_orders!inner(order_date)&packaging_orders.order_date=eq.${today}`}),
+      supaFetch("assembly_orders",{query:`select=id&order_date=eq.${today}`}),
+      supaFetch("packaging_orders",{query:`select=id&order_date=eq.${today}`})
+    ]);
+    const asmQty=(asmItems||[]).reduce((s,r)=>s+(r.qty||0),0);
+    const pkgQty=(pkgItems||[]).reduce((s,r)=>s+(r.qty||0),0);
+
+    // anomalies — past 30 days
+    const d30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+    let anomalyCount=0;let recentAnom=[];
+    try{
+      const rec=await supaRpc("fn_reconcile_by_date_range",{p_date_from:d30,p_date_to:today});
+      const unresolved=(rec||[]).filter(r=>r.status!=="matched"&&!r.hidden&&!r.resolved_at);
+      anomalyCount=unresolved.length;
+      recentAnom=unresolved.slice(0,5);
+    }catch(e){console.error("Dashboard RPC error:",e);}
+
+    setStats({asmQty,pkgQty,asmOrders:(asmOrders||[]).length,pkgOrders:(pkgOrders||[]).length,anomalies:anomalyCount});
+    setRecentAnomalies(recentAnom);
+
+    // week trend — Mon~Sun
+    const now=new Date();const dow=now.getDay();const mondayOffset=dow===0?-6:1-dow;
+    const monday=new Date(now);monday.setDate(now.getDate()+mondayOffset);
+    const sunday=new Date(monday);sunday.setDate(monday.getDate()+6);
+    const wFrom=monday.toISOString().slice(0,10);const wTo=sunday.toISOString().slice(0,10);
+    const[wAsm,wPkg]=await Promise.all([
+      supaFetch("assembly_items",{query:`select=qty,assembly_orders!inner(order_date)&assembly_orders.order_date=gte.${wFrom}&assembly_orders.order_date=lte.${wTo}`}),
+      supaFetch("packaging_items",{query:`select=qty,packaging_orders!inner(order_date)&packaging_orders.order_date=gte.${wFrom}&packaging_orders.order_date=lte.${wTo}`})
+    ]);
+    const days=[];for(let i=0;i<7;i++){const d=new Date(monday);d.setDate(monday.getDate()+i);days.push(d.toISOString().slice(0,10));}
+    const asmByDay={};const pkgByDay={};days.forEach(d=>{asmByDay[d]=0;pkgByDay[d]=0;});
+    (wAsm||[]).forEach(r=>{const d=r.assembly_orders?.order_date;if(d&&asmByDay[d]!==undefined)asmByDay[d]+=r.qty||0;});
+    (wPkg||[]).forEach(r=>{const d=r.packaging_orders?.order_date;if(d&&pkgByDay[d]!==undefined)pkgByDay[d]+=r.qty||0;});
+    setWeekData(days.map(d=>({date:d,asm:asmByDay[d],pkg:pkgByDay[d]})));
+  }catch(e){console.error(e);}setLoading(false);})();},[]);
+
+  const dayLabels=["日","一","二","三","四","五","六"];
+  const maxVal=Math.max(1,...weekData.map(d=>Math.max(d.asm,d.pkg)));
+
+  const cardStyle={display:"flex",alignItems:"center",gap:14,background:"var(--surface)",border:"1px solid var(--border)",borderRadius:8,padding:"16px 20px",flex:1,minWidth:160};
+
+  if(loading)return <div className="spinner"/>;
+  return <div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:24}}>
+      <div style={cardStyle}><div className="stat-icon" style={{background:"var(--accent)"}}>🔧</div><div><div className="stat-value">{stats.asmQty}</div><div className="stat-label">今日組裝數量</div></div></div>
+      <div style={cardStyle}><div className="stat-icon" style={{background:"var(--primary)"}}>📦</div><div><div className="stat-value">{stats.pkgQty}</div><div className="stat-label">今日包裝數量</div></div></div>
+      <div style={cardStyle}><div className="stat-icon" style={{background:"#6B7280"}}>📋</div><div><div className="stat-value">{stats.asmOrders} / {stats.pkgOrders}</div><div className="stat-label">今日組裝單 / 包裝單</div></div></div>
+      <div style={cardStyle}><div className="stat-icon" style={{background:stats.anomalies>0?"var(--danger)":"var(--success)"}}>{stats.anomalies>0?"⚠":"✓"}</div><div><div className="stat-value">{stats.anomalies}</div><div className="stat-label">待處理異常</div></div></div>
+    </div>
+
+    <div className="card" style={{marginBottom:24}}>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:16}}>本週產量趨勢</div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:8,height:180,padding:"0 8px"}}>
+        {weekData.map(d=>{const aH=Math.round((d.asm/maxVal)*150);const pH=Math.round((d.pkg/maxVal)*150);const dn=new Date(d.date);const label=`${dn.getMonth()+1}/${dn.getDate()}(${dayLabels[dn.getDay()]})`;const isToday=d.date===today;
+        return <div key={d.date} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <div style={{display:"flex",gap:3,alignItems:"flex-end",height:155}}>
+            <div style={{width:18,height:Math.max(aH,2),background:isToday?"#1E6FBF":"var(--accent)",borderRadius:"3px 3px 0 0",position:"relative"}} title={`組裝 ${d.asm}`}>{d.asm>0&&<span style={{position:"absolute",top:-16,left:"50%",transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:"var(--accent)",whiteSpace:"nowrap"}}>{d.asm}</span>}</div>
+            <div style={{width:18,height:Math.max(pH,2),background:isToday?"#15803D":"var(--primary)",borderRadius:"3px 3px 0 0",position:"relative"}} title={`包裝 ${d.pkg}`}>{d.pkg>0&&<span style={{position:"absolute",top:-16,left:"50%",transform:"translateX(-50%)",fontSize:10,fontWeight:700,color:"var(--primary)",whiteSpace:"nowrap"}}>{d.pkg}</span>}</div>
+          </div>
+          <div style={{fontSize:11,color:isToday?"var(--primary)":"var(--muted)",fontWeight:isToday?700:400}}>{label}</div>
+        </div>;})}
+      </div>
+      <div style={{display:"flex",justifyContent:"center",gap:20,marginTop:12,fontSize:12,color:"var(--muted)"}}>
+        <span><span style={{display:"inline-block",width:12,height:12,background:"var(--accent)",borderRadius:2,marginRight:4,verticalAlign:"middle"}}/> 組裝</span>
+        <span><span style={{display:"inline-block",width:12,height:12,background:"var(--primary)",borderRadius:2,marginRight:4,verticalAlign:"middle"}}/> 包裝</span>
+      </div>
+    </div>
+
+    {recentAnomalies.length>0&&<div className="card">
+      <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>最近異常（待處理）</div>
+      <div className="table-wrap"><table><thead><tr><th>產品編號</th><th>產品名稱</th><th>組裝數</th><th>包裝數</th><th>差異</th><th>狀態</th></tr></thead>
+      <tbody>{recentAnomalies.map((r,i)=><tr key={i} className="clickable" onClick={()=>onNavigate("reconciliation")} style={{cursor:"pointer"}}>
+        <td><code style={{fontWeight:600}}>{r.product_code}</code></td><td>{r.product_name}</td>
+        <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{r.assembly_qty}</td>
+        <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{r.packaging_qty}</td>
+        <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:r.diff>0?"var(--danger)":"var(--warning)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
+        <td><Badge type={r.status==="missing_pkg"||r.status==="missing_asm"||r.status==="over_packaged"?"error":r.status==="wip_normal"?"info":"warning"}>{r.status_desc}</Badge></td>
+      </tr>)}</tbody></table></div>
+      <div style={{textAlign:"right",marginTop:8}}><button className="btn btn-sm btn-secondary" onClick={()=>onNavigate("reconciliation")}>查看完整核對報告 →</button></div>
+    </div>}
+  </div>;
+}
+
+// ============================================================
+// Edit Logs (操作記錄)
+// ============================================================
+function EditLogsTab({toast}){
+  const today=new Date().toISOString().slice(0,10);
+  const[dateFrom,setDateFrom]=useState(today);const[dateTo,setDateTo]=useState(today);
+  const[tableFilter,setTableFilter]=useState("");
+  const[logs,setLogs]=useState([]);const[loading,setLoading]=useState(true);
+  const[page,setPage]=useState(0);const pageSize=50;const[total,setTotal]=useState(0);
+
+  const load=useCallback(async()=>{setLoading(true);try{
+    let q=`select=*&order=created_at.desc&limit=${pageSize}&offset=${page*pageSize}`;
+    if(dateFrom)q+=`&created_at=gte.${dateFrom}T00:00:00`;
+    if(dateTo)q+=`&created_at=lte.${dateTo}T23:59:59`;
+    if(tableFilter)q+=`&table_name=eq.${tableFilter}`;
+    const data=await supaFetch("edit_logs",{query:q,headers:{"Prefer":"count=exact","Range-Unit":"items","Range":`${page*pageSize}-${(page+1)*pageSize-1}`}});
+    setLogs(data||[]);
+    // try to get total from header — fallback to data length
+    setTotal(data?data.length+(page*pageSize):0);
+  }catch(e){console.error(e);toast("載入失敗: "+e.message,"error");}setLoading(false);},[dateFrom,dateTo,tableFilter,page]);
+
+  useEffect(()=>{load();},[load]);
+
+  const search=()=>{setPage(0);load();};
+
+  const tableNames=["assembly_items","packaging_items","testing_items","staff","customers","products"];
+  const tableLabels={assembly_items:"組裝明細",packaging_items:"包裝明細",testing_items:"測試明細",staff:"人員",customers:"客戶",products:"產品"};
+
+  return <div>
+    <div className="filter-bar">
+      <span className="filter-label">日期範圍：</span>
+      <input type="date" className="input" value={dateFrom} onChange={e=>setDateFrom(e.target.value)}/>
+      <span style={{color:"var(--muted)"}}>～</span>
+      <input type="date" className="input" value={dateTo} onChange={e=>setDateTo(e.target.value)}/>
+      <span className="filter-label">資料表：</span>
+      <select className="input" value={tableFilter} onChange={e=>setTableFilter(e.target.value)}>
+        <option value="">全部</option>
+        {tableNames.map(t=><option key={t} value={t}>{tableLabels[t]||t}</option>)}
+      </select>
+      <button className="btn btn-primary" onClick={search}>查詢</button>
+      <button className="btn btn-secondary" onClick={()=>{setDateFrom(today);setDateTo(today);setTableFilter("");setPage(0);}}>重置</button>
+    </div>
+    {loading?<div className="spinner"/>:logs.length===0?<div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>無操作記錄</div>:
+    <><div className="table-wrap"><table>
+      <thead><tr><th>時間</th><th>操作者</th><th>資料表</th><th>記錄 ID</th><th>欄位</th><th>舊值</th><th>新值</th><th>原因</th></tr></thead>
+      <tbody>{logs.map(l=><tr key={l.id}>
+        <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,whiteSpace:"nowrap"}}>{l.created_at?new Date(l.created_at).toLocaleString("zh-TW",{hour12:false}):"-"}</td>
+        <td style={{fontWeight:600}}>{l.edited_by||"-"}</td>
+        <td><Badge type="info">{tableLabels[l.table_name]||l.table_name}</Badge></td>
+        <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11}}>{l.record_id?l.record_id.slice(0,8)+"...":"-"}</td>
+        <td>{l.field_name||"-"}</td>
+        <td style={{color:"var(--danger)",fontFamily:"'JetBrains Mono',monospace",fontSize:12}}>{l.old_value||"-"}</td>
+        <td style={{color:"var(--primary)",fontFamily:"'JetBrains Mono',monospace",fontSize:12}}>{l.new_value||"-"}</td>
+        <td style={{fontSize:12}}>{l.reason||"-"}</td>
+      </tr>)}</tbody>
+    </table></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,fontSize:12,color:"var(--muted)"}}>
+      <span>第 {page+1} 頁 · 顯示 {page*pageSize+1}~{page*pageSize+logs.length} 筆</span>
+      <div style={{display:"flex",gap:6}}>
+        <button className="btn btn-sm btn-secondary" disabled={page===0} onClick={()=>setPage(p=>p-1)}>← 上一頁</button>
+        <button className="btn btn-sm btn-secondary" disabled={logs.length<pageSize} onClick={()=>setPage(p=>p+1)}>下一頁 →</button>
+      </div>
+    </div></>}
+  </div>;
+}
+
+const TABS=[{key:"dashboard",label:"儀表板",icon:"📊"},{key:"reconciliation",label:"核對報告",icon:"📋"},{key:"assembly",label:"組裝單",icon:"🔧"},{key:"packaging",label:"包裝出貨入庫",icon:"📦"},{key:"testing",label:"測試表",icon:"🧪"},{key:"products",label:"產品主檔",icon:"🏭"},{key:"customers",label:"客戶管理",icon:"🏢"},{key:"staff",label:"人員管理",icon:"👥"},{key:"logs",label:"操作記錄",icon:"📝"}];
 
 function App(){
-  const[tab,setTab]=useState("reconciliation");const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[staff,setStaff]=useState([]);
+  const[tab,setTab]=useState("dashboard");const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[staff,setStaff]=useState([]);
   const[toastMsg,setToastMsg]=useState(null);const[toastType,setToastType]=useState("success");
   const toast=(msg,type="success")=>{setToastMsg(msg);setToastType(type);setTimeout(()=>setToastMsg(null),4000);};
   const loadProducts=useCallback(async()=>{try{setProducts(await supaFetchAll("products","select=*&is_active=eq.true&order=product_id")||[]);}catch(e){}},[]);
@@ -506,9 +669,10 @@ function App(){
   return <div>
     <Toast message={toastMsg} type={toastType} onClose={()=>setToastMsg(null)}/>
     <div className="print-header"><h1>I-Reporter</h1><p></p></div>
-    <div className="header"><div className="header-inner"><div style={{display:"flex",alignItems:"center",gap:12}}><div className="header-logo">⚙</div><div><div className="header-title">I-Reporter</div><div className="header-sub">成品組裝 × 包裝入庫 × 測試 核對系統</div></div></div><div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>v1.5 · {products.length} products · {staff.length} staff</div></div></div>
+    <div className="header"><div className="header-inner"><div style={{display:"flex",alignItems:"center",gap:12}}><div className="header-logo">⚙</div><div><div className="header-title">I-Reporter</div><div className="header-sub">成品組裝 × 包裝入庫 × 測試 核對系統</div></div></div><div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>v1.6 · {products.length} products · {staff.length} staff</div></div></div>
     <div className="tab-bar"><div className="tab-bar-inner">{TABS.map(t=><button key={t.key} className={`tab-btn ${tab===t.key?"active":""}`} onClick={()=>setTab(t.key)}><span>{t.icon}</span>{t.label}</button>)}</div></div>
     <div className="content">
+      {tab==="dashboard"&&<DashboardTab toast={toast} onNavigate={setTab}/>}
       {tab==="reconciliation"&&<ReconciliationTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="assembly"&&<AssemblyTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="packaging"&&<PackagingTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
@@ -516,8 +680,9 @@ function App(){
       {tab==="products"&&<ProductsTab products={products} reload={loadProducts} toast={toast}/>}
       {tab==="staff"&&<StaffTab staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="customers"&&<CustomersTab customers={customers} toast={toast} reloadCustomers={loadCustomers}/>}
+      {tab==="logs"&&<EditLogsTab toast={toast}/>}
     </div>
-    <div className="footer">I-Reporter v1.5 · 成品組裝 × 包裝入庫 × 測試 核對系統</div>
+    <div className="footer">I-Reporter v1.6 · 成品組裝 × 包裝入庫 × 測試 核對系統</div>
   </div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
