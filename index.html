@@ -363,11 +363,12 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff,onNavigat
   </div>;
 }
 
-function AssemblyTab({products,staff,toast,reloadStaff}){
+function AssemblyTab({products,staff,toast,reloadStaff,pendingOrderNo,onNavDone}){
   const[orders,setOrders]=useState([]);const[items,setItems]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);const[showForm,setShowForm]=useState(false);const[orderDate,setOrderDate]=useState(new Date().toISOString().slice(0,10));const[newItems,setNewItems]=useState([{product_id:"",qty:1,assembler:"",warehouse_date:"",note:""}]);
   const[staffModal,setStaffModal]=useState(false);const[editModal,setEditModal]=useState({show:false,item:null});
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetch("assembly_orders",{query:"select=*&order=order_date.desc,created_at.desc"})||[]);}catch(e){}setLoading(false);},[]);
   useEffect(()=>{load();},[load]);
+  useEffect(()=>{if(pendingOrderNo&&orders.length>0){const match=orders.find(o=>o.order_no===pendingOrderNo);if(match){loadItems(match.id);if(onNavDone)onNavDone();}}},[pendingOrderNo,orders]);
   const loadItems=async id=>{try{setItems(await supaFetch("assembly_items",{query:`select=*,products(product_id,product_name)&order_id=eq.${id}`})||[]);setSel(id);}catch(e){}};
   const create=async()=>{const valid=newItems.filter(it=>it.product_id&&it.qty>0);if(!valid.length){toast("請至少新增一個產品","error");return;}try{const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:orderDate,status:"draft"}});for(const it of valid)await supaFetch("assembly_items",{method:"POST",body:{order_id:order.id,product_id:it.product_id,qty:parseInt(it.qty),assembler:it.assembler,warehouse_date:it.warehouse_date||null,note:it.note}});toast("組裝單建立成功！單號: "+order.order_no,"success");setShowForm(false);setNewItems([{product_id:"",qty:1,assembler:"",warehouse_date:"",note:""}]);load();}catch(e){toast("建立失敗: "+e.message,"error");}};
   const approveOrder=async(id)=>{try{await supaPatch("assembly_orders",`id=eq.${id}`,{status:"approved"});toast("已核准","success");load();}catch(e){toast("核准失敗: "+e.message,"error");}};
@@ -380,11 +381,12 @@ function AssemblyTab({products,staff,toast,reloadStaff}){
   {loading?<div className="spinner"/>:<div className="split-view"><div className="split-left">{orders.map(o=><div key={o.id} className={`order-card ${sel===o.id?"selected":""}`} onClick={()=>loadItems(o.id)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><code className="order-no">{o.order_no}</code><Badge type={sC[o.status]}>{sL[o.status]}</Badge></div><div className="order-date">📅 {o.order_date}</div></div>)}{!orders.length&&<div style={{textAlign:"center",padding:30,color:"var(--muted)"}}>尚無組裝單</div>}</div>{sel&&<div className="split-right">{selOrder&&selOrder.status==="draft"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-primary btn-sm" style={{background:"var(--success)"}} onClick={()=>approveOrder(sel)}>✓ 核准</button><button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>{if(confirm("確定要刪除此組裝單？")){(async()=>{try{await supaDelete("assembly_items",`order_id=eq.${sel}`);await supaDelete("assembly_orders",`id=eq.${sel}`);toast("已刪除","success");setSel(null);load();}catch(e){toast("刪除失敗: "+e.message,"error");}})();}}}>🗑 刪除</button></div>}{selOrder&&selOrder.status==="approved"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-secondary btn-sm" onClick={()=>revertDraft(sel)}>↩ 退回草稿</button></div>}<div className="table-wrap"><table><thead><tr>{["產品編號","產品名稱","數量","組裝人員","入庫日期","備註",""].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{items.map(it=><tr key={it.id}><td><code style={{fontWeight:600}}>{it.products?.product_id}</code></td><td>{it.products?.product_name}</td><td style={{fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{it.qty}</td><td>{it.assembler||"-"}</td><td>{it.warehouse_date||"-"}</td><td>{it.note||"-"}</td><td><button className="btn-edit" onClick={()=>setEditModal({show:true,item:{id:it.id,qty:it.qty,orderNo:selOrder?.order_no,productCode:it.products?.product_id,productName:it.products?.product_name}})}>修改</button></td></tr>)}</tbody></table></div></div>}</div>}</div>;
 }
 
-function PackagingTab({products,customers,staff,toast,reloadStaff}){
+function PackagingTab({products,customers,staff,toast,reloadStaff,pendingOrderNo,onNavDone}){
   const[orders,setOrders]=useState([]);const[items,setItems]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);const[showForm,setShowForm]=useState(false);const[orderDate,setOrderDate]=useState(new Date().toISOString().slice(0,10));const[newItems,setNewItems]=useState([{product_id:"",qty:1,customer_id:"",tester:"",inspector:"",assembly_date:"",note:""}]);
   const[staffModal,setStaffModal]=useState({show:false,role:"tester"});const[editModal,setEditModal]=useState({show:false,item:null});
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetch("packaging_orders",{query:"select=*&order=order_date.desc,created_at.desc"})||[]);}catch(e){}setLoading(false);},[]);
   useEffect(()=>{load();},[load]);
+  useEffect(()=>{if(pendingOrderNo&&orders.length>0){const match=orders.find(o=>o.order_no===pendingOrderNo);if(match){loadItems(match.id);if(onNavDone)onNavDone();}}},[pendingOrderNo,orders]);
   const loadItems=async id=>{try{setItems(await supaFetch("packaging_items",{query:`select=*,products(product_id,product_name),customers(name)&order_id=eq.${id}`})||[]);setSel(id);}catch(e){console.error(e);}};
   const create=async()=>{const valid=newItems.filter(it=>it.product_id&&it.qty>0);if(!valid.length){toast("請至少新增一個產品","error");return;}try{const[order]=await supaFetch("packaging_orders",{method:"POST",body:{order_date:orderDate,status:"draft"}});for(const it of valid)await supaFetch("packaging_items",{method:"POST",body:{order_id:order.id,product_id:it.product_id,qty:parseInt(it.qty),customer_id:it.customer_id||null,is_stock:!it.customer_id,tester:it.tester,inspector:it.inspector,assembly_date:it.assembly_date||null,note:it.note}});toast("包裝出貨入庫單建立成功！單號: "+order.order_no,"success");setShowForm(false);setNewItems([{product_id:"",qty:1,customer_id:"",tester:"",inspector:"",assembly_date:"",note:""}]);load();}catch(e){toast("建立失敗: "+e.message,"error");}};
   const handleEdit=async({recordId,tableName,oldQty,newQty,editedBy,reason})=>{try{await supaFetch("edit_logs",{method:"POST",body:{table_name:tableName,record_id:recordId,field_name:"qty",old_value:String(oldQty),new_value:String(newQty),edited_by:editedBy,reason}});await supaPatch(tableName,`id=eq.${recordId}`,{qty:newQty});toast(`數量已修改: ${oldQty} → ${newQty}`,"success");setEditModal({show:false,item:null});if(sel)loadItems(sel);}catch(e){toast("修改失敗: "+e.message,"error");}};
@@ -452,7 +454,8 @@ function App(){
   const[toastMsg,setToastMsg]=useState(null);const[toastType,setToastType]=useState("success");
   const toast=(msg,type="success")=>{setToastMsg(msg);setToastType(type);setTimeout(()=>setToastMsg(null),4000);};
   const[pendingNav,setPendingNav]=useState(null);
-  const navigateToOrder=(tabKey,orderNo)=>{setPendingNav({orderNo});setTab(tabKey);toast(`已切換至${tabKey==="assembly"?"組裝單":"包裝單"} — 請點選 ${orderNo}`,"success");};
+  const navigateToOrder=(tabKey,orderNo)=>{setPendingNav({orderNo});setTab(tabKey);};
+
   const loadProducts=useCallback(async()=>{try{setProducts(await supaFetchAll("products","select=*&is_active=eq.true&order=product_id")||[]);}catch(e){}},[]);
   const loadCustomers=useCallback(async()=>{try{setCustomers(await supaFetch("customers",{query:"select=*&is_active=eq.true&order=name"})||[]);}catch(e){}},[]);
   const loadStaff=useCallback(async()=>{try{setStaff(await supaFetch("staff",{query:"select=*&is_active=eq.true&order=name"})||[]);}catch(e){}},[]);
@@ -464,8 +467,8 @@ function App(){
     <div className="tab-bar"><div className="tab-bar-inner">{TABS.map(t=><button key={t.key} className={`tab-btn ${tab===t.key?"active":""}`} onClick={()=>setTab(t.key)}><span>{t.icon}</span>{t.label}</button>)}</div></div>
     <div className="content">
       {tab==="reconciliation"&&<ReconciliationTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff} onNavigate={navigateToOrder}/>}
-      {tab==="assembly"&&<AssemblyTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
-      {tab==="packaging"&&<PackagingTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
+      {tab==="assembly"&&<AssemblyTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff} pendingOrderNo={pendingNav?.orderNo} onNavDone={()=>setPendingNav(null)}/>}
+      {tab==="packaging"&&<PackagingTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff} pendingOrderNo={pendingNav?.orderNo} onNavDone={()=>setPendingNav(null)}/>}
       {tab==="testing"&&<TestingTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="products"&&<ProductsTab products={products} reload={loadProducts} toast={toast}/>}
       {tab==="staff"&&<StaffTab staff={staff} toast={toast} reloadStaff={loadStaff}/>}
