@@ -268,8 +268,8 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       const df3=dateFrom?`&packaging_orders.order_date=gte.${dateFrom}`:"";
       const df4=dateTo?`&packaging_orders.order_date=lte.${dateTo}`:"";
       const[asmItems,pkgItems]=await Promise.all([
-        supaFetch("assembly_items",{query:`select=*,assembly_orders!inner(order_no,order_date),products!inner(product_id,product_name)&products.product_id=eq.${encodeURIComponent(productCode)}${df1}${df2}&order=assembly_orders.order_date.desc`}),
-        supaFetch("packaging_items",{query:`select=*,packaging_orders!inner(order_no,order_date),products!inner(product_id,product_name),customers(name)&products.product_id=eq.${encodeURIComponent(productCode)}${df3}${df4}&order=packaging_orders.order_date.desc`})
+        supaFetch("assembly_items",{query:`select=*,assembly_orders!inner(order_no,order_date),products!inner(product_id,product_name)&products.product_id=eq.${encodeURIComponent(productCode)}${df1}${df2}&order=created_at.desc`}),
+        supaFetch("packaging_items",{query:`select=*,packaging_orders!inner(order_no,order_date),products!inner(product_id,product_name),customers(name)&products.product_id=eq.${encodeURIComponent(productCode)}${df3}${df4}&order=created_at.desc`})
       ]);
       setExpandData({asm:asmItems||[],pkg:pkgItems||[]});
     }catch(e){console.error(e);setExpandData({asm:[],pkg:[]});}
