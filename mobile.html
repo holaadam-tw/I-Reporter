@@ -36,15 +36,18 @@ code{font-family:'JetBrains Mono',monospace}
 .worker-btn:active{transform:scale(.95)}
 .worker-btn.selected{border-color:var(--primary);background:var(--primary-light);color:var(--primary)}
 
-/* Product search */
-.search-box{position:relative}
-.search-input{width:100%;padding:14px 16px;border:2px solid var(--border);border-radius:10px;font-size:16px;outline:none;font-family:inherit;background:var(--surface);transition:border .15s}
-.search-input:focus{border-color:var(--primary)}
-.search-results{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:0 0 10px 10px;max-height:250px;overflow-y:auto;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.12)}
-.search-item{padding:12px 16px;border-bottom:1px solid #f0f0f0;cursor:pointer;font-size:14px;display:flex;flex-direction:column;gap:2px}
-.search-item:active{background:var(--primary-light)}
-.search-item-code{font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--accent);font-size:13px}
-.search-item-name{font-weight:500}
+/* Product dropdown */
+.product-select-wrap{position:relative}
+.product-select{width:100%;padding:14px 40px 14px 16px;border:2px solid var(--border);border-radius:10px;font-size:16px;outline:none;font-family:'Noto Sans TC',sans-serif;background:var(--surface);transition:border .15s;appearance:none;-webkit-appearance:none;-moz-appearance:none;cursor:pointer;color:var(--text)}
+.product-select:focus{border-color:var(--primary)}
+.product-select option{font-size:15px;padding:8px}
+.product-select-arrow{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--muted);font-size:14px}
+
+/* Product filter input above dropdown */
+.product-filter-wrap{position:relative;margin-bottom:8px}
+.product-filter{width:100%;padding:10px 16px;border:2px solid var(--border);border-radius:10px;font-size:14px;outline:none;font-family:inherit;background:var(--surface);transition:border .15s}
+.product-filter:focus{border-color:var(--primary)}
+.product-filter-clear{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:4px}
 
 /* Selected product display */
 .selected-product{background:var(--primary-light);border:2px solid var(--primary);border-radius:10px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
@@ -101,6 +104,12 @@ code{font-family:'JetBrains Mono',monospace}
 .empty{text-align:center;padding:30px;color:var(--muted);font-size:14px}
 .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin:30px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* Error banner */
+.error-banner{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B;padding:10px 16px;border-radius:10px;font-size:13px;margin-bottom:14px;display:flex;align-items:center;gap:8px;animation:fadeIn .3s}
+
+/* Product count info */
+.product-count{font-size:11px;color:var(--muted);margin-top:6px;text-align:right}
 </style>
 </head>
 <body>
@@ -117,31 +126,31 @@ async function supaFetch(table,{method="GET",body,query=""}={}){
   const text=await res.text();return text?JSON.parse(text):null;
 }
 
-const{useState,useEffect,useCallback,useRef}=React;
+const{useState,useEffect,useCallback,useRef,useMemo}=React;
 
 function App(){
-  const[tab,setTab]=useState("input"); // input | today
+  const[tab,setTab]=useState("input");
   const[products,setProducts]=useState([]);
   const[staff,setStaff]=useState([]);
   const[todayRecords,setTodayRecords]=useState([]);
   const[loading,setLoading]=useState(true);
+  const[loadError,setLoadError]=useState(null);
 
   // Form state
   const[selectedWorkers,setSelectedWorkers]=useState([]);
   const[selectedProduct,setSelectedProduct]=useState(null);
   const[qty,setQty]=useState(1);
   const[note,setNote]=useState("");
-  const[search,setSearch]=useState("");
-  const[showSearch,setShowSearch]=useState(false);
+  const[productFilter,setProductFilter]=useState("");
   const[submitting,setSubmitting]=useState(false);
   const[showSuccess,setShowSuccess]=useState(null);
 
-  const searchRef=useRef(null);
   const today=new Date().toISOString().slice(0,10);
   const todayDisplay=today.replace(/-/g,"/");
 
   const loadData=useCallback(async()=>{
     setLoading(true);
+    setLoadError(null);
     try{
       const[prods,staffList]=await Promise.all([
         supaFetch("products",{query:"select=*&is_active=eq.true&order=product_id"}),
@@ -149,7 +158,13 @@ function App(){
       ]);
       setProducts(prods||[]);
       setStaff(staffList||[]);
-    }catch(e){console.error(e);}
+      if(!prods||prods.length===0){
+        setLoadError("⚠ 未載入到任何產品資料，請檢查 Supabase 連線與 products 資料表");
+      }
+    }catch(e){
+      console.error(e);
+      setLoadError("❌ 資料載入失敗: "+e.message);
+    }
     setLoading(false);
   },[]);
 
@@ -165,44 +180,49 @@ function App(){
 
   useEffect(()=>{loadData();loadTodayRecords();},[loadData,loadTodayRecords]);
 
-  // Close search dropdown on outside click
-  useEffect(()=>{
-    const h=e=>{if(searchRef.current&&!searchRef.current.contains(e.target))setShowSearch(false);};
-    document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);
-  },[]);
-
   const assemblers=staff.filter(s=>s.role==="assembler"||s.role==="general");
 
-  const filteredProducts=products.filter(p=>{
-    if(!search)return false;
-    const s=search.toLowerCase();
-    return p.product_id.toLowerCase().includes(s)||p.product_name.toLowerCase().includes(s);
-  }).slice(0,30);
+  // Filter products for dropdown based on filter text
+  const filteredProducts=useMemo(()=>{
+    if(!productFilter)return products;
+    const s=productFilter.toLowerCase();
+    return products.filter(p=>
+      p.product_id.toLowerCase().includes(s)||p.product_name.toLowerCase().includes(s)
+    );
+  },[products,productFilter]);
 
   const canSubmit=selectedWorkers.length>0&&selectedProduct&&qty>0;
-  const selectedWorker=selectedWorkers.join(",");
 
   const handleSubmit=async()=>{
     if(!canSubmit||submitting)return;
     setSubmitting(true);
     try{
-      // Find or create today's assembly order for this worker
-      const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:today,status:"draft"}});
+      // Find or create today's assembly order
+      let orders=await supaFetch("assembly_orders",{query:`select=*&order_date=eq.${today}&status=eq.draft&limit=1`});
+      let order;
+      if(orders&&orders.length>0){
+        order=orders[0];
+      }else{
+        const created=await supaFetch("assembly_orders",{method:"POST",body:{order_date:today,status:"draft"}});
+        order=created[0];
+      }
+
+      const workerStr=selectedWorkers.join(",");
       await supaFetch("assembly_items",{method:"POST",body:{
         order_id:order.id,
         product_id:selectedProduct.id,
         qty:parseInt(qty),
-        assembler:selectedWorker,
+        assembler:workerStr,
         note:note||null
       }});
       setShowSuccess({
-        orderNo:order.order_no,
+        orderNo:order.order_no||"(自動產生)",
         product:selectedProduct,
         qty:parseInt(qty),
-        worker:selectedWorker
+        worker:workerStr
       });
       // Reset form (keep workers selected)
-      setSelectedProduct(null);setQty(1);setNote("");setSearch("");
+      setSelectedProduct(null);setQty(1);setNote("");setProductFilter("");
       loadTodayRecords();
     }catch(e){alert("提交失敗: "+e.message);}
     setSubmitting(false);
@@ -239,6 +259,9 @@ function App(){
     </div>
 
     <div className="content">
+      {/* Error banner */}
+      {loadError&&<div className="error-banner">{loadError}</div>}
+
       {tab==="input"&&<>
         {/* Step 1: Select Worker */}
         <div className="section">
@@ -250,7 +273,7 @@ function App(){
           </div>
         </div>
 
-        {/* Step 2: Select Product */}
+        {/* Step 2: Select Product - DROPDOWN */}
         <div className="section">
           <div className="section-title">📦 產品</div>
           {selectedProduct?
@@ -259,20 +282,39 @@ function App(){
                 <div className="selected-product-code">{selectedProduct.product_id}</div>
                 <div className="selected-product-name">{selectedProduct.product_name}</div>
               </div>
-              <button className="clear-btn" onClick={()=>{setSelectedProduct(null);setSearch("");}}>✕</button>
+              <button className="clear-btn" onClick={()=>{setSelectedProduct(null);setProductFilter("");}}>✕</button>
             </div>
           :
-            <div className="search-box" ref={searchRef}>
-              <input className="search-input" placeholder="🔍 輸入產品編號或名稱..." value={search} onChange={e=>{setSearch(e.target.value);setShowSearch(true);}} onFocus={()=>setShowSearch(true)}/>
-              {showSearch&&search&&<div className="search-results">
-                {filteredProducts.length===0?<div style={{padding:16,textAlign:"center",color:"var(--muted)"}}>找不到產品</div>:
-                filteredProducts.map(p=>(
-                  <div key={p.id} className="search-item" onClick={()=>{setSelectedProduct(p);setShowSearch(false);setSearch("");}}>
-                    <span className="search-item-code">{p.product_id}</span>
-                    <span className="search-item-name">{p.product_name}</span>
-                  </div>
-                ))}
+            <div>
+              {/* Filter input */}
+              {products.length>10&&<div className="product-filter-wrap">
+                <input
+                  className="product-filter"
+                  placeholder="🔍 輸入關鍵字篩選..."
+                  value={productFilter}
+                  onChange={e=>setProductFilter(e.target.value)}
+                />
+                {productFilter&&<button className="product-filter-clear" onClick={()=>setProductFilter("")}>✕</button>}
               </div>}
+
+              {/* Dropdown select */}
+              <div className="product-select-wrap">
+                <select
+                  className="product-select"
+                  value=""
+                  onChange={e=>{
+                    const prod=products.find(p=>p.id.toString()===e.target.value);
+                    if(prod){setSelectedProduct(prod);setProductFilter("");}
+                  }}
+                >
+                  <option value="" disabled>— 請選擇產品 ({filteredProducts.length}) —</option>
+                  {filteredProducts.map(p=>(
+                    <option key={p.id} value={p.id}>{p.product_id} — {p.product_name}</option>
+                  ))}
+                </select>
+                <span className="product-select-arrow">▼</span>
+              </div>
+              <div className="product-count">共 {products.length} 項產品{productFilter?`，篩選後 ${filteredProducts.length} 項`:""}</div>
             </div>
           }
         </div>
@@ -286,7 +328,7 @@ function App(){
                 <button className="qty-btn" onClick={()=>setQty(Math.max(1,qty-10))}>-10</button>
                 <button className="qty-btn" onClick={()=>setQty(Math.max(1,qty-1))}>−</button>
               </div>
-              <input type="number" className="qty-input" value={qty} onChange={e=>setQty(Math.max(0,parseInt(e.target.value)||0))} min="0"/>
+              <input type="number" className="qty-input" value={qty} onChange={e=>{const v=parseInt(e.target.value);setQty(v>0?v:1);}} min="1"/>
               <div className="qty-side">
                 <button className="qty-btn" onClick={()=>setQty(qty+1)}>+</button>
                 <button className="qty-btn" onClick={()=>setQty(qty+10)}>+10</button>
@@ -311,7 +353,7 @@ function App(){
           {submitting?"提交中...":"✓ 確認提交"}
         </button>
         {!canSubmit&&<div style={{textAlign:"center",fontSize:12,color:"var(--muted)",marginTop:8}}>
-          {!selectedWorker?"請先選擇組裝人員（可複選）":!selectedProduct?"請選擇產品":"請輸入數量"}
+          {selectedWorkers.length===0?"請先選擇組裝人員（可複選）":!selectedProduct?"請選擇產品":"請輸入數量"}
         </div>}
       </>}
 
