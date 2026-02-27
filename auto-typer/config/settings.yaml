@@ -1,0 +1,17 @@
+supabase:
+  url: "https://ndyyicskqplybpdtbksm.supabase.co"
+  anon_key: ""  # 使用者自行填入
+
+pyautogui:
+  pause: 0.3          # 每個動作間隔秒數
+  failsafe: true      # 滑鼠移到左上角中止
+  typing_interval: 0.05
+
+safety:
+  hotkey_pause: "F9"
+  hotkey_stop: "F10"
+  focus_check: true    # 目標視窗失焦自動暫停
+
+logging:
+  level: "INFO"
+  max_files: 30

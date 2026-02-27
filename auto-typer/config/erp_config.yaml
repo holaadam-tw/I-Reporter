@@ -1,0 +1,87 @@
+erp:
+  window_title: "ERP System"  # 視窗標題（用於 focus 檢查）
+
+  assembly:
+    input_method: "click_and_type"  # 預設輸入方式: click_and_type / tab_and_type / screenshot_click
+    steps:
+      - action: "screenshot_click"
+        image: "erp_new_order.png"
+        desc: "點擊新增按鈕"
+
+      - action: "click_and_type"
+        x: 350
+        y: 180
+        field: "order_date"
+        desc: "輸入日期"
+
+      - action: "click_and_type"
+        x: 350
+        y: 220
+        field: "order_no"
+        desc: "輸入單號"
+
+      # 子項目（items）會依序填入，以下定義每筆子項目的欄位
+    item_steps:
+      - action: "screenshot_click"
+        image: "erp_add_item.png"
+        desc: "點擊新增品項"
+
+      - action: "tab_and_type"
+        field: "product_id"
+        tabs: 1
+        desc: "輸入產品編號"
+
+      - action: "tab_and_type"
+        field: "quantity"
+        tabs: 1
+        desc: "輸入數量"
+
+    save_step:
+      action: "screenshot_click"
+      image: "erp_save.png"
+      desc: "點擊儲存"
+
+  packaging:
+    input_method: "click_and_type"
+    steps:
+      - action: "screenshot_click"
+        image: "erp_new_pkg.png"
+        desc: "點擊新增包裝單"
+
+      - action: "click_and_type"
+        x: 350
+        y: 180
+        field: "order_date"
+        desc: "輸入日期"
+
+      - action: "click_and_type"
+        x: 350
+        y: 220
+        field: "order_no"
+        desc: "輸入單號"
+
+      - action: "click_and_type"
+        x: 350
+        y: 260
+        field: "customer_code"
+        desc: "輸入客戶代碼"
+
+    item_steps:
+      - action: "screenshot_click"
+        image: "erp_add_item.png"
+        desc: "點擊新增品項"
+
+      - action: "tab_and_type"
+        field: "product_id"
+        tabs: 1
+        desc: "輸入產品編號"
+
+      - action: "tab_and_type"
+        field: "quantity"
+        tabs: 1
+        desc: "輸入數量"
+
+    save_step:
+      action: "screenshot_click"
+      image: "erp_save.png"
+      desc: "點擊儲存"
