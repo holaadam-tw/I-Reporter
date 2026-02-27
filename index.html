@@ -180,7 +180,7 @@ async function supaFetchAll(table,baseQuery){
   return all;
 }
 
-const{useState,useEffect,useCallback,useRef}=React;
+const{useState,useEffect,useCallback,useRef,useMemo}=React;
 
 function exportToExcel(data,columns,filename){
   const ws_data=[columns.map(c=>c.label)];
@@ -246,11 +246,32 @@ async function loadDetailItems(productCode,dateFrom,dateTo){
   return{asm:asmItems||[],pkg:pkgItems||[]};
 }
 
+// 逐單累計配對：合併組裝/包裝，按日期 ASC 排序，計算每張單的配對狀態
+function computeMatchStatus(asmItems,pkgItems){
+  const merged=[];
+  (asmItems||[]).forEach(a=>merged.push({...a,_type:"asm",_date:a.assembly_orders?.order_date||"",_qty:a.qty||0}));
+  (pkgItems||[]).forEach(p=>merged.push({...p,_type:"pkg",_date:p.packaging_orders?.order_date||"",_qty:p.qty||0}));
+  merged.sort((a,b)=>{if(a._date<b._date)return -1;if(a._date>b._date)return 1;if(a._type==="asm"&&b._type==="pkg")return -1;if(a._type==="pkg"&&b._type==="asm")return 1;return 0;});
+  let asmRunning=0,pkgRunning=0;
+  const statusMap={};
+  merged.forEach(r=>{
+    if(r._type==="asm")asmRunning+=r._qty; else pkgRunning+=r._qty;
+    const diff=asmRunning-pkgRunning;
+    if(diff>=0&&r._type==="asm"){statusMap[r.id]={label:diff>0?`🔸 待包裝 ${diff}`:"✅ 已配對",color:diff>0?"#e67e22":"#27ae60",asmRunning,pkgRunning};}
+    else if(diff>=0&&r._type==="pkg"){statusMap[r.id]={label:"✅ 已配對",color:"#27ae60",asmRunning,pkgRunning};}
+    else if(diff<0&&r._type==="pkg"){statusMap[r.id]={label:`⚠️ 超出 ${-diff}`,color:"#e74c3c",asmRunning,pkgRunning};}
+    else if(diff<0&&r._type==="asm"){statusMap[r.id]={label:`⚠️ 超出 ${-diff}`,color:"#e74c3c",asmRunning,pkgRunning};}
+    else{statusMap[r.id]={label:"✅ 已配對",color:"#27ae60",asmRunning,pkgRunning};}
+  });
+  return statusMap;
+}
+
 // Shared: expand detail rows for asm/pkg items with clickable order numbers
 function ExpandDetailSection({expandData,onOrderClick,onEditClick}){
+  const matchStatus=useMemo(()=>computeMatchStatus(expandData.asm,expandData.pkg),[expandData.asm,expandData.pkg]);
   return <div className="expand-content">
-    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th>數量</th><th>組裝人員</th><th>入庫日期</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=><tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td style={{fontWeight:700}}>{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td>{a.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button></td>}</tr>)}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無組裝記錄</div>}</div>
-    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=><tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td style={{fontWeight:700}}>{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td>{p.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button></td>}</tr>)}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無包裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];return <tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td style={{fontWeight:700}}>{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td style={{fontWeight:600,fontSize:12,color:ms?.color||"var(--muted)",whiteSpace:"nowrap"}}>{ms?.label||"-"}</td><td>{a.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無組裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];return <tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td style={{fontWeight:700}}>{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td style={{fontWeight:600,fontSize:12,color:ms?.color||"var(--muted)",whiteSpace:"nowrap"}}>{ms?.label||"-"}</td><td>{p.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無包裝記錄</div>}</div>
   </div>;
 }
 
