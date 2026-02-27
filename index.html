@@ -802,6 +802,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       supaFetch("reconciliation_confirmed",{query:`select=id,product_id,assembly_qty,packaging_qty,confirmed_at,confirmed_by,confirmed_item_ids,date_from,date_to&date_from=lte.${dt}&date_to=gte.${df}`})
     ]);
     console.log('RPC result count:', (rpcData||[]).length);
+    if(rpcData&&rpcData[0])console.log('RPC sample keys:', Object.keys(rpcData[0]), 'sample:', JSON.stringify(rpcData[0]).slice(0,300));
     setData(adjustWithConfirmed(rpcData||[],confData||[]));
   }catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
@@ -907,7 +908,8 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
   const setFilterAndReset=(f)=>{setFilter(f);setPage(1);};
   const statusFilter=r=>{if(filter==="all")return true;if(filter==="matched")return r.status==="matched";if(filter==="mismatch")return r.status==="qty_mismatch";if(filter==="missing")return r.status==="missing_pkg"||r.status==="missing_asm";if(filter==="wip")return r.status==="wip_normal";if(filter==="over")return r.status==="over_packaged";return true;};
-  const colFilter=r=>{for(const[k,v] of Object.entries(colSearch)){if(!v)continue;if(!String(r[k]||"").toLowerCase().includes(v.toLowerCase()))return false;}return true;};
+  const colFilter=r=>{for(const[k,v] of Object.entries(colSearch)){if(!v)continue;const val=String(r[k]||"").toLowerCase();if(!val.includes(v.toLowerCase()))return false;}return true;};
+  if(colSearch.product_code||colSearch.product_name||colSearch.status_desc)console.log('colSearch:',colSearch,'data[0] keys:',data[0]?Object.keys(data[0]):[],'filtered count:',data.filter(statusFilter).filter(colFilter).length);
   const hiddenFilter=r=>{if(showHidden)return true;return !r.hidden;};
   const matchedFilter=r=>{if(showMatched)return true;if(filter==="all"||filter==="matched")return true;return r.status!=="matched";};
 
