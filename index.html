@@ -249,17 +249,33 @@ function EditQtyModal({show,onClose,onSave,item,tableName,staff,onAddStaff}){
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}><div className="modal-title">✏️ 修改數量</div><div style={{background:"#f8f7f4",borderRadius:6,padding:10,marginBottom:14,fontSize:12}}><div><strong>單號：</strong>{item.orderNo}</div><div><strong>產品：</strong>{item.productCode} - {item.productName}</div></div><div className="modal-field"><label>原始數量</label><div style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:18,color:"var(--muted)"}}>{item.qty}</div></div><div className="modal-field"><label>新數量 <span style={{color:"var(--danger)"}}>*</span></label><input type="number" className="input" style={{width:"100%",fontSize:16,fontWeight:700}} min="0" value={newQty} onChange={e=>setNewQty(e.target.value)} autoFocus/></div><div className="modal-field"><label>修改人員 <span style={{color:"var(--danger)"}}>*</span></label><StaffSelect staff={staff} value={editedBy} onChange={setEditedBy} onAdd={onAddStaff} style={{width:"100%"}}/></div><div className="modal-field"><label>修改原因 <span style={{color:"var(--danger)"}}>*</span></label><input className="input" style={{width:"100%"}} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例：數量計算錯誤、補數、客戶要求變更..." onKeyDown={e=>e.key==="Enter"&&save()}/></div><div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>修改日期：{new Date().toISOString().slice(0,10)} · 所有修改記錄將被保存</div><div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button className="btn btn-secondary" onClick={onClose}>取消</button><button className="btn btn-primary" onClick={save}>確認修改</button></div></div></div>;
 }
 
-// Shared: load assembly/packaging items for a product within a date range
-async function loadDetailItems(productCode,dateFrom,dateTo){
+// Shared: load assembly/packaging/conversion items for a product within a date range
+async function loadDetailItems(productCode,dateFrom,dateTo,productId){
   const df1=dateFrom?`&assembly_orders.order_date=gte.${dateFrom}`:"";
   const df2=dateTo?`&assembly_orders.order_date=lte.${dateTo}`:"";
   const df3=dateFrom?`&packaging_orders.order_date=gte.${dateFrom}`:"";
   const df4=dateTo?`&packaging_orders.order_date=lte.${dateTo}`:"";
-  const[asmItems,pkgItems]=await Promise.all([
+  const dfCnv1=dateFrom?`&conversion_date=gte.${dateFrom}`:"";
+  const dfCnv2=dateTo?`&conversion_date=lte.${dateTo}`:"";
+  const cnvSelect=`select=*,from_product:products!from_product_id(product_id,product_name),to_product:products!to_product_id(product_id,product_name)`;
+  const fetches=[
     supaFetch("assembly_items",{query:`select=*,assembly_orders!inner(order_no,order_date),products!inner(product_id,product_name)&products.product_id=eq.${encodeURIComponent(productCode)}${df1}${df2}&order=created_at.desc`}),
     supaFetch("packaging_items",{query:`select=*,packaging_orders!inner(order_no,order_date),products!inner(product_id,product_name),customers(name)&products.product_id=eq.${encodeURIComponent(productCode)}${df3}${df4}&order=created_at.desc`})
-  ]);
-  return{asm:asmItems||[],pkg:pkgItems||[]};
+  ];
+  if(productId){
+    fetches.push(
+      supaFetch("conversion_orders",{query:`${cnvSelect}&from_product_id=eq.${productId}${dfCnv1}${dfCnv2}&order=conversion_date.desc`}),
+      supaFetch("conversion_orders",{query:`${cnvSelect}&to_product_id=eq.${productId}${dfCnv1}${dfCnv2}&order=conversion_date.desc`})
+    );
+  }
+  const results=await Promise.all(fetches);
+  const asmItems=results[0],pkgItems=results[1];
+  let cnv=[];
+  if(productId){
+    const seen=new Set();
+    [...(results[2]||[]),...(results[3]||[])].forEach(c=>{if(!seen.has(c.id)){seen.add(c.id);cnv.push(c);}});
+  }
+  return{asm:asmItems||[],pkg:pkgItems||[],cnv};
 }
 
 // 逐單累計配對：合併組裝/包裝，按日期 ASC 排序，用最終總數回判每筆配對狀態
@@ -393,7 +409,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[dateFrom,setDateFrom]=useState(d10);const[dateTo,setDateTo]=useState(d5);
   const[filter,setFilter]=useState("all");const[sortCol,setSortCol]=useState("status");const[sortDir,setSortDir]=useState("asc");
   const[colSearch,setColSearch]=useState({product_code:"",product_name:"",status_desc:""});
-  const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[]});
+  const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[],cnv:[]});
   const[showHidden,setShowHidden]=useState(false);const[showMatched,setShowMatched]=useState(false);
   const[supplementing,setSupplementing]=useState(null);
   const[suppForm,setSuppForm]=useState({qty:1,assembler:"",tester:"",inspector:"",customer_id:"",assembly_date:"",note:""});
@@ -478,17 +494,17 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     if(expandedRow===rowKey){setExpandedRow(null);return;}
     setExpandedRow(rowKey);setSupplementing(null);setCheckedIds(new Set());
     try{
-      const detail=await loadDetailItems(row.product_code,dateFrom,dateTo);
+      const detail=await loadDetailItems(row.product_code,dateFrom,dateTo,row.product_id);
       // 確認行：只顯示被確認的那些單據
       if(row.is_confirmed_entry&&row.confirmed_item_ids&&row.confirmed_item_ids.length>0){
         const ids=new Set(row.confirmed_item_ids);
-        setExpandData({asm:(detail.asm||[]).filter(a=>ids.has(a.id)),pkg:(detail.pkg||[]).filter(p=>ids.has(p.id))});
+        setExpandData({asm:(detail.asm||[]).filter(a=>ids.has(a.id)),pkg:(detail.pkg||[]).filter(p=>ids.has(p.id)),cnv:detail.cnv||[]});
       }else{
         setExpandData(detail);
         // 非 matched 行才載入 confirmedIds（用於勾選確認）
         if(row.status!=="matched"&&!row.is_confirmed_entry){await loadConfirmedIds(row.product_code);}
       }
-    }catch(e){console.error(e);setExpandData({asm:[],pkg:[]});}
+    }catch(e){console.error(e);setExpandData({asm:[],pkg:[],cnv:[]});}
   };
 
   const handleCheck=(id)=>{setCheckedIds(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});};
@@ -634,6 +650,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
               onEditClick={isConfEntry?null:(tableName,item)=>setEditModal({show:true,tableName,item:{id:item.id,qty:item.qty,orderNo:(tableName==="assembly_items"?item.assembly_orders:item.packaging_orders)?.order_no,productCode:item.products?.product_id,productName:item.products?.product_name}})}
               {...(needsAction&&!isConfEntry?{checkedIds,confirmedIds,onCheck:handleCheck}:{})}/>
+            {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
             {needsAction&&!isConfEntry&&checkedIds.size>0&&<div style={{display:"flex",gap:8,padding:"4px 16px 12px",alignItems:"center"}}><button className="btn btn-sm btn-primary" style={{background:"var(--success)"}} onClick={()=>handleConfirmBatch(r)}>確認已勾選 ({checkedIds.size} 筆)</button><button className="btn btn-sm btn-secondary" onClick={()=>setCheckedIds(new Set())}>清除勾選</button></div>}
             {needsAction&&!isConfEntry&&!supplementing&&<div style={{display:"flex",gap:8,padding:"0 16px 12px"}}>
               <button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button>
@@ -702,6 +719,73 @@ function TestingTab({products,staff,toast,reloadStaff}){
   {loading?<div className="spinner"/>:<div className="split-view"><div className="split-left">{orders.map(o=><div key={o.id} className={`order-card ${sel===o.id?"selected":""}`} onClick={()=>loadItems(o.id)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><code className="order-no">{o.order_no}</code><Badge type={sC[o.status]}>{sL[o.status]}</Badge></div><div className="order-date">📅 {o.order_date}</div></div>)}{!orders.length&&<div style={{textAlign:"center",padding:30,color:"var(--muted)"}}>尚無測試單</div>}</div>{sel&&<div className="split-right"><div className="table-wrap"><table><thead><tr>{["產品編號","產品名稱","測試數量","測試人員","結果","備註"].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{items.map(it=><tr key={it.id}><td><code style={{fontWeight:600}}>{it.products?.product_id}</code></td><td>{it.products?.product_name}</td><td style={{fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{it.qty}</td><td>{it.tester||"-"}</td><td><Badge type={it.test_result==="pass"?"success":it.test_result==="fail"?"error":"neutral"}>{it.test_result==="pass"?"通過":it.test_result==="fail"?"不合格":"待測試"}</Badge></td><td>{it.note||"-"}</td></tr>)}</tbody></table></div></div>}</div>}</div>;
 }
 
+function ConversionTab({products,toast}){
+  const[orders,setOrders]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);
+  const[showForm,setShowForm]=useState(false);
+  const[form,setForm]=useState({conversion_date:new Date().toISOString().slice(0,10),from_product_id:"",to_product_id:"",qty:1,reason:"",note:""});
+  const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetchAll("conversion_orders","select=*,from_product:products!from_product_id(product_id,product_name),to_product:products!to_product_id(product_id,product_name)&order=conversion_date.desc,created_at.desc")||[]);}catch(e){console.error(e);}setLoading(false);},[]);
+  useEffect(()=>{load();},[load]);
+  const create=async()=>{
+    if(!form.from_product_id){toast("請選擇來源產品","error");return;}
+    if(!form.to_product_id){toast("請選擇目標產品","error");return;}
+    if(form.from_product_id===form.to_product_id){toast("來源與目標產品不能相同","error");return;}
+    if(!form.qty||parseInt(form.qty)<=0){toast("數量必須大於 0","error");return;}
+    try{
+      const[order]=await supaFetch("conversion_orders",{method:"POST",body:{conversion_date:form.conversion_date,from_product_id:form.from_product_id,to_product_id:form.to_product_id,qty:parseInt(form.qty),reason:form.reason||null,note:form.note||null}});
+      toast(`轉換單建立成功！單號: ${order.order_no}`,"success");
+      setShowForm(false);setForm({conversion_date:new Date().toISOString().slice(0,10),from_product_id:"",to_product_id:"",qty:1,reason:"",note:""});load();
+    }catch(e){toast("建立失敗: "+e.message,"error");}
+  };
+  const complete=async(id)=>{try{await supaPatch("conversion_orders",`id=eq.${id}`,{status:"completed",completed_at:new Date().toISOString()});toast("已完成","success");load();}catch(e){toast("操作失敗: "+e.message,"error");}};
+  const cancel=async(id)=>{if(!confirm("確定要取消此轉換單？"))return;try{await supaPatch("conversion_orders",`id=eq.${id}`,{status:"cancelled"});toast("已取消","success");load();}catch(e){toast("操作失敗: "+e.message,"error");}};
+  const sC={pending:"warning",completed:"success",cancelled:"error"};const sL={pending:"待處理",completed:"已完成",cancelled:"已取消"};
+  const selOrder=orders.find(o=>o.id===sel);
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+      <span style={{fontSize:12,color:"var(--muted)"}}>共 {orders.length} 筆轉換單</span>
+      <button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>{showForm?"取消":"+ 新增轉換單"}</button>
+    </div>
+    {showForm&&<div className="form-box"><div className="form-title">新增成品轉換單</div>
+      <div className="form-row" style={{marginBottom:8}}><span className="filter-label">轉換日期：</span><input type="date" className="input" value={form.conversion_date} onChange={e=>setForm({...form,conversion_date:e.target.value})} style={{width:160}}/></div>
+      <div className="form-row" style={{marginBottom:8}}>
+        <span className="filter-label">來源產品：</span><ProductSearch products={products} value={form.from_product_id} onChange={v=>setForm({...form,from_product_id:v})} style={{minWidth:240,flex:2}}/>
+        <span className="filter-label" style={{marginLeft:12}}>目標產品：</span><ProductSearch products={products} value={form.to_product_id} onChange={v=>setForm({...form,to_product_id:v})} style={{minWidth:240,flex:2}}/>
+      </div>
+      <div className="form-row" style={{marginBottom:8}}>
+        <span className="filter-label">數量：</span><input type="number" className="input" style={{width:80}} min="1" value={form.qty} onChange={e=>setForm({...form,qty:e.target.value})}/>
+        <span className="filter-label" style={{marginLeft:12}}>轉換原因：</span><input className="input" style={{flex:1}} value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} placeholder="例：升級、型號變更..."/>
+      </div>
+      <div className="form-row"><span className="filter-label">備註：</span><input className="input" style={{flex:1}} value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="備註"/><button className="btn btn-primary" onClick={create}>確認建立</button></div>
+    </div>}
+    {loading?<div className="spinner"/>:<div className="split-view">
+      <div className="split-left">{orders.map(o=><div key={o.id} className={`order-card ${sel===o.id?"selected":""}`} onClick={()=>setSel(o.id)}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><code className="order-no">{o.order_no}</code><Badge type={sC[o.status]}>{sL[o.status]}</Badge></div>
+        <div className="order-date">📅 {o.conversion_date}</div>
+        <div style={{fontSize:12,marginTop:4,color:"var(--text)"}}>{o.from_product?.product_id} → {o.to_product?.product_id} × <strong>{o.qty}</strong></div>
+      </div>)}{!orders.length&&<div style={{textAlign:"center",padding:30,color:"var(--muted)"}}>尚無轉換單</div>}</div>
+      {sel&&selOrder&&<div className="split-right"><div className="card" style={{padding:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div><code className="order-no" style={{fontSize:18}}>{selOrder.order_no}</code><Badge type={sC[selOrder.status]} style={{marginLeft:8}}>{sL[selOrder.status]}</Badge></div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px 24px",fontSize:13}}>
+          <div><span style={{color:"var(--muted)"}}>轉換日期</span><div style={{fontWeight:600,marginTop:2}}>{selOrder.conversion_date}</div></div>
+          <div><span style={{color:"var(--muted)"}}>數量</span><div style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:20,marginTop:2}}>{selOrder.qty}</div></div>
+          <div><span style={{color:"var(--muted)"}}>來源產品</span><div style={{fontWeight:600,marginTop:2}}><code>{selOrder.from_product?.product_id}</code> - {selOrder.from_product?.product_name}</div></div>
+          <div><span style={{color:"var(--muted)"}}>目標產品</span><div style={{fontWeight:600,marginTop:2}}><code>{selOrder.to_product?.product_id}</code> - {selOrder.to_product?.product_name}</div></div>
+          <div><span style={{color:"var(--muted)"}}>轉換原因</span><div style={{marginTop:2}}>{selOrder.reason||"-"}</div></div>
+          <div><span style={{color:"var(--muted)"}}>備註</span><div style={{marginTop:2}}>{selOrder.note||"-"}</div></div>
+          <div><span style={{color:"var(--muted)"}}>建立時間</span><div style={{marginTop:2,fontSize:12}}>{selOrder.created_at?new Date(selOrder.created_at).toLocaleString("zh-TW",{hour12:false}):"-"}</div></div>
+          {selOrder.completed_at&&<div><span style={{color:"var(--muted)"}}>完成時間</span><div style={{marginTop:2,fontSize:12}}>{new Date(selOrder.completed_at).toLocaleString("zh-TW",{hour12:false})}</div></div>}
+        </div>
+        {selOrder.status==="pending"&&<div style={{display:"flex",gap:8,marginTop:20}}>
+          <button className="btn btn-primary btn-sm" style={{background:"var(--success)"}} onClick={()=>complete(sel)}>✓ 完成</button>
+          <button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>cancel(sel)}>✕ 取消</button>
+        </div>}
+      </div></div>}
+    </div>}
+  </div>;
+}
+
 function ProductsTab({products,reload,toast}){
   const[showForm,setShowForm]=useState(false);const[form,setForm]=useState({product_id:"",product_name:"",category:"",spec:""});const[search,setSearch]=useState("");
   const create=async()=>{if(!form.product_id||!form.product_name){toast("請填寫產品編號和名稱","error");return;}try{await supaFetch("products",{method:"POST",body:form});toast("產品新增成功","success");setForm({product_id:"",product_name:"",category:"",spec:""});setShowForm(false);reload();}catch(e){toast("新增失敗: "+e.message,"error");}};
@@ -746,11 +830,11 @@ function DashboardTab({toast,onNavigate}){
   const[weekData,setWeekData]=useState([]);
   const[recentAnomalies,setRecentAnomalies]=useState([]);
   const[loading,setLoading]=useState(true);
-  const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[]});
+  const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[],cnv:[]});
   const[orderModal,setOrderModal]=useState({show:false,orderNo:null,orderType:null});
   const[activeCard,setActiveCard]=useState(null);const[cardOrders,setCardOrders]=useState([]);const[cardLoading,setCardLoading]=useState(false);
   const d30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
-  const toggleDetail=async(productCode)=>{const rowKey=productCode;if(expandedRow===rowKey){setExpandedRow(null);return;}setExpandedRow(rowKey);try{setExpandData(await loadDetailItems(productCode,d30,today));}catch(e){console.error(e);setExpandData({asm:[],pkg:[]});}};
+  const toggleDetail=async(row)=>{const rowKey=typeof row==="string"?row:row.product_code;if(expandedRow===rowKey){setExpandedRow(null);return;}setExpandedRow(rowKey);try{const pid=typeof row==="string"?null:row.product_id;setExpandData(await loadDetailItems(rowKey,d30,today,pid));}catch(e){console.error(e);setExpandData({asm:[],pkg:[],cnv:[]});}};
 
   const handleCardClick=async(cardKey)=>{
     if(activeCard===cardKey){setActiveCard(null);setCardOrders([]);return;}
@@ -848,7 +932,7 @@ function DashboardTab({toast,onNavigate}){
       {cardLoading?<div className="spinner"/>:cardOrders.length===0?<div style={{color:"var(--muted)",textAlign:"center",padding:24}}>暫無資料</div>:
         activeCard==="anomalies"?<><div className="table-wrap"><table><thead><tr><th style={{width:30}}></th><th>產品編號</th><th>產品名稱</th><th style={{textAlign:"right"}}>組裝數</th><th style={{textAlign:"right"}}>包裝數</th><th style={{textAlign:"right"}}>差異</th><th>狀態</th></tr></thead>
           <tbody>{cardOrders.map((r,i)=>{const isExp=expandedRow===r.product_code;return <React.Fragment key={i}>
-            <tr className="clickable" onClick={()=>toggleDetail(r.product_code)}>
+            <tr className="clickable" onClick={()=>toggleDetail(r)}>
               <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExp?"▼":"▶"}</td>
               <td><code style={{fontWeight:600}}>{r.product_code}</code></td><td>{r.product_name}</td>
               <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.assembly_qty}</td>
@@ -856,7 +940,10 @@ function DashboardTab({toast,onNavigate}){
               <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,textAlign:"right",color:r.diff>0?"var(--danger)":"var(--warning)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
               <td><Badge type={r.status==="missing_pkg"||r.status==="missing_asm"||r.status==="over_packaged"?"error":r.status==="wip_normal"?"info":"warning"}>{r.status_desc}</Badge></td>
             </tr>
-            {isExp&&<tr className="expand-row"><td colSpan={7}><ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}/></td></tr>}
+            {isExp&&<tr className="expand-row"><td colSpan={7}>
+              <ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}/>
+              {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
+            </td></tr>}
           </React.Fragment>;})}</tbody></table></div><div style={{textAlign:"right",marginTop:8}}><button className="btn btn-sm btn-secondary" onClick={()=>onNavigate("reconciliation")}>查看完整核對報告 →</button></div></>
         :activeCard==="orders"?<div className="table-wrap"><table><thead><tr><th>單號</th><th>類型</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th></tr></thead>
           <tbody>{cardOrders.map((o,i)=><tr key={i} className="clickable" onClick={()=>setOrderModal({show:true,orderNo:o.order_no,orderType:o._type})}>
@@ -901,7 +988,7 @@ function DashboardTab({toast,onNavigate}){
       <div style={{fontWeight:700,fontSize:14,marginBottom:12}}>最近異常（待處理）</div>
       <div className="table-wrap"><table><thead><tr><th style={{width:30}}></th><th>產品編號</th><th>產品名稱</th><th style={{textAlign:"right"}}>組裝數</th><th style={{textAlign:"right"}}>包裝數</th><th style={{textAlign:"right"}}>差異</th><th>狀態</th></tr></thead>
       <tbody>{recentAnomalies.map((r,i)=>{const isExp=expandedRow===r.product_code;return <React.Fragment key={i}>
-        <tr className="clickable" onClick={()=>toggleDetail(r.product_code)}>
+        <tr className="clickable" onClick={()=>toggleDetail(r)}>
           <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExp?"▼":"▶"}</td>
           <td><code style={{fontWeight:600}}>{r.product_code}</code></td><td>{r.product_name}</td>
           <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.assembly_qty}</td>
@@ -909,7 +996,10 @@ function DashboardTab({toast,onNavigate}){
           <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,textAlign:"right",color:r.diff>0?"var(--danger)":"var(--warning)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
           <td><Badge type={r.status==="missing_pkg"||r.status==="missing_asm"||r.status==="over_packaged"?"error":r.status==="wip_normal"?"info":"warning"}>{r.status_desc}</Badge></td>
         </tr>
-        {isExp&&<tr className="expand-row"><td colSpan={7}><ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}/></td></tr>}
+        {isExp&&<tr className="expand-row"><td colSpan={7}>
+          <ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}/>
+          {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
+        </td></tr>}
       </React.Fragment>;})}</tbody></table></div>
       <div style={{textAlign:"right",marginTop:8}}><button className="btn btn-sm btn-secondary" onClick={()=>onNavigate("reconciliation")}>查看完整核對報告 →</button></div>
     </div>}
@@ -982,7 +1072,7 @@ function EditLogsTab({toast}){
   </div>;
 }
 
-const TABS=[{key:"dashboard",label:"儀表板",icon:"📊"},{key:"reconciliation",label:"核對報告",icon:"📋"},{key:"assembly",label:"組裝單",icon:"🔧"},{key:"packaging",label:"包裝出貨入庫",icon:"📦"},{key:"testing",label:"測試表",icon:"🧪"},{key:"products",label:"產品主檔",icon:"🏭"},{key:"customers",label:"客戶管理",icon:"🏢"},{key:"staff",label:"人員管理",icon:"👥"},{key:"logs",label:"操作記錄",icon:"📝"}];
+const TABS=[{key:"dashboard",label:"儀表板",icon:"📊"},{key:"reconciliation",label:"核對報告",icon:"📋"},{key:"assembly",label:"組裝單",icon:"🔧"},{key:"packaging",label:"包裝出貨入庫",icon:"📦"},{key:"testing",label:"測試表",icon:"🧪"},{key:"conversion",label:"成品轉換",icon:"🔄"},{key:"products",label:"產品主檔",icon:"🏭"},{key:"customers",label:"客戶管理",icon:"🏢"},{key:"staff",label:"人員管理",icon:"👥"},{key:"logs",label:"操作記錄",icon:"📝"}];
 
 function App(){
   const[tab,setTab]=useState("dashboard");const[products,setProducts]=useState([]);const[customers,setCustomers]=useState([]);const[staff,setStaff]=useState([]);
@@ -1003,6 +1093,7 @@ function App(){
       {tab==="assembly"&&<AssemblyTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="packaging"&&<PackagingTab products={products} customers={customers} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="testing"&&<TestingTab products={products} staff={staff} toast={toast} reloadStaff={loadStaff}/>}
+      {tab==="conversion"&&<ConversionTab products={products} toast={toast}/>}
       {tab==="products"&&<ProductsTab products={products} reload={loadProducts} toast={toast}/>}
       {tab==="staff"&&<StaffTab staff={staff} toast={toast} reloadStaff={loadStaff}/>}
       {tab==="customers"&&<CustomersTab customers={customers} toast={toast} reloadCustomers={loadCustomers}/>}
