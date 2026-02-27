@@ -740,7 +740,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[supplementing,setSupplementing]=useState(null);
   const[suppForm,setSuppForm]=useState({qty:1,assembler:"",tester:"",pkgAssembler:"",customer_id:"",assembly_date:"",note:""});
   const[staffModal,setStaffModal]=useState({show:false,role:"general"});
-  const[editModal,setEditModal]=useState({show:false,item:null,tableName:""});
+  const[editModal,setEditModal]=useState({show:false,item:null,tableName:"",type:""});
   const[checkedIds,setCheckedIds]=useState(new Set());
   const[confirmedIds,setConfirmedIds]=useState(new Set());
   const[page,setPage]=useState(1);const[pageSize,setPageSize]=useState(50);
@@ -854,12 +854,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       await supaFetch("reconciliation_confirmed",{method:"POST",body:{product_id:productId,date_from:df,date_to:dt,assembly_qty:asmQty,packaging_qty:pkgQty,confirmed_item_ids:itemIds,confirmed_by:"系統使用者"}});
       toast(`已確認 ${asmChecked.length+pkgChecked.length} 筆（組裝 ${asmQty} + 包裝 ${pkgQty}）`,"success");
       setCheckedIds(new Set());
-      // 關閉展開行，刷新核對數據，再重新展開以反映新狀態
-      const pc=expandedRow?expandedRow.split("_")[0]:null;
-      setExpandedRow(null);
-      await load();
-      // 自動重新展開同一產品（用 setTimeout 等 state 更新完）
-      if(pc){setTimeout(()=>{loadDetail(null,pc,null);},200);}
+      reloadAndReexpand();
     }catch(e){toast("確認失敗: "+e.message,"error");}
   };
 
@@ -900,9 +895,17 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     }catch(e){toast("取消確認失敗: "+e.message,"error");}
   };
 
-  const handleEditQty=async({recordId,tableName,oldQty,newQty,editedBy,reason})=>{try{await supaFetch("edit_logs",{method:"POST",body:{table_name:tableName,record_id:recordId,field_name:"qty",old_value:String(oldQty),new_value:String(newQty),edited_by:editedBy,reason}});await supaPatch(tableName,`id=eq.${recordId}`,{qty:newQty});toast(`數量已從 ${oldQty} 修改為 ${newQty}`,"success");setEditModal({show:false,item:null,tableName:""});if(expandedRow){const[pc]=expandedRow.split("_");setExpandedRow(null);setTimeout(()=>loadDetail(null,pc,null),100);}load();}catch(e){toast("修改失敗: "+e.message,"error");}};
+  const reloadAndReexpand=async()=>{const pc=expandedRow?expandedRow.split("_")[0]:null;setExpandedRow(null);await load();if(pc){setTimeout(()=>{const row=data.find(r=>r.product_code===pc&&!r.is_confirmed_entry);if(row)loadDetail(row);},300);}};
+  const handleEditItem=async(form)=>{const{item,tableName}=editModal;try{
+    const body=tableName==="assembly_items"
+      ?{product_id:form.product_id,qty:parseInt(form.qty),assembler:form.assembler||null,warehouse_date:form.warehouse_date||null,note:form.note||null}
+      :{product_id:form.product_id,qty:parseInt(form.qty),customer_id:form.customer_id||null,is_stock:!form.customer_id,tester:form.tester||null,assembler:form.assembler||null,assembly_date:form.assembly_date||null,note:form.note||null};
+    await supaPatch(tableName,`id=eq.${item.id}`,body);
+    toast("明細已修改","success");setEditModal({show:false,item:null,tableName:"",type:""});
+    reloadAndReexpand();
+  }catch(e){toast("修改失敗: "+e.message,"error");}};
 
-  const handleDeleteItem=async(tableName,item)=>{const pid=item.product_id;const conf=await supaFetch("reconciliation_confirmed",{query:`select=id&product_id=eq.${pid}`});if(conf&&conf.length>0){toast("此產品已在核對報告中確認，無法刪除","error");return;}if(!confirm("確定刪除此筆明細？此操作不可復原。"))return;try{await supaDelete(tableName,`id=eq.${item.id}`);toast("已刪除","success");setExpandedRow(null);load();}catch(e){toast("刪除失敗: "+e.message,"error");}};
+  const handleDeleteItem=async(tableName,item)=>{const pid=item.product_id;const conf=await supaFetch("reconciliation_confirmed",{query:`select=id&product_id=eq.${pid}`});if(conf&&conf.length>0){toast("此產品已在核對報告中確認，無法刪除","error");return;}if(!confirm("確定刪除此筆明細？此操作不可復原。"))return;try{await supaDelete(tableName,`id=eq.${item.id}`);toast("已刪除","success");reloadAndReexpand();}catch(e){toast("刪除失敗: "+e.message,"error");}};
 
   const submitSupplement=async()=>{if(!supplementing)return;const{product_id,type}=supplementing;const qty=parseInt(suppForm.qty);if(!qty||qty<=0){toast("請輸入正確數量","error");return;}try{if(type==="asm"){const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:suppForm.order_date||new Date().toISOString().slice(0,10),status:"draft"}});await supaFetch("assembly_items",{method:"POST",body:{order_id:order.id,product_id,qty,assembler:suppForm.assembler||null,warehouse_date:suppForm.assembly_date||null,note:suppForm.note||"補單"}});toast(`組裝補單成功！${order.order_no}`,"success");}else{const[order]=await supaFetch("packaging_orders",{method:"POST",body:{order_date:new Date().toISOString().slice(0,10),status:"draft"}});await supaFetch("packaging_items",{method:"POST",body:{order_id:order.id,product_id,qty,customer_id:suppForm.customer_id||null,is_stock:!suppForm.customer_id,tester:suppForm.tester||null,assembler:suppForm.pkgAssembler||null,assembly_date:suppForm.assembly_date||null,note:suppForm.note||"補單"}});toast(`包裝補單成功！${order.order_no}`,"success");}setSupplementing(null);setSuppForm({qty:1,assembler:"",tester:"",pkgAssembler:"",customer_id:"",assembly_date:"",note:""});load();}catch(e){toast("補單失敗: "+e.message,"error");}};
 
@@ -937,7 +940,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
   return <div>
     <AddStaffModal show={staffModal.show} defaultRole={staffModal.role} onClose={()=>setStaffModal({show:false,role:"general"})} onSave={addStaff}/>
-    <EditQtyModal show={editModal.show} item={editModal.item} tableName={editModal.tableName} staff={staff} onClose={()=>setEditModal({show:false,item:null,tableName:""})} onSave={handleEditQty} onAddStaff={()=>setStaffModal({show:true,role:"general"})}/>
+    <EditFullItemModal show={editModal.show} item={editModal.item} type={editModal.type} products={products} customers={customers} staff={staff} onClose={()=>setEditModal({show:false,item:null,tableName:"",type:""})} onSave={handleEditItem} onAddStaff={r=>setStaffModal({show:true,role:r})}/>
     <OrderDetailModal show={orderModal.show} orderNo={orderModal.orderNo} orderType={orderModal.orderType} onClose={()=>setOrderModal({show:false,orderNo:null,orderType:null})}/>
     <div className="filter-bar">
       <span className="filter-label">日期範圍：</span>
@@ -988,7 +991,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
           {isExpanded&&<tr className="expand-row"><td colSpan={9}>
             <ExpandDetailSection expandData={expandData}
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
-              onEditClick={isConfEntry?null:(tableName,item)=>setEditModal({show:true,tableName,item:{id:item.id,qty:item.qty,orderNo:(tableName==="assembly_items"?item.assembly_orders:item.packaging_orders)?.order_no,productCode:item.products?.product_id,productName:item.products?.product_name}})}
+              onEditClick={isConfEntry?null:(tableName,item)=>{const isAsm=tableName==="assembly_items";setEditModal({show:true,tableName,type:isAsm?"assembly":"packaging",item:isAsm?{id:item.id,product_id:item.product_id,qty:item.qty,assembler:item.assembler||"",warehouse_date:item.warehouse_date||"",note:item.note||""}:{id:item.id,product_id:item.product_id,qty:item.qty,customer_id:item.customer_id||"",is_stock:item.is_stock,tester:item.tester||"",assembler:item.assembler||"",assembly_date:item.assembly_date||"",note:item.note||""}});}}
               onDeleteClick={isConfEntry?null:handleDeleteItem}
               {...(needsAction&&!isConfEntry?{checkedIds,confirmedIds,onCheck:handleCheck}:{})}/>
             {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
