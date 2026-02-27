@@ -152,6 +152,21 @@ select.input{cursor:pointer}
 .print-header{display:none}
 .action-bar{display:flex;gap:6px;flex-wrap:wrap}
 .btn-icon{padding:6px 12px;font-size:12px;display:flex;align-items:center;gap:4px}
+.import-mapping{background:#f8f7f4;border-radius:8px;padding:12px;margin-bottom:12px}
+.import-mapping-row{display:flex;align-items:center;gap:8px;padding:4px 0;flex-wrap:wrap}
+.import-mapping-code{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;min-width:60px;background:#fff;border:1px solid #e0ddd5;border-radius:4px;padding:2px 8px}
+.import-error-row{background:#fef2f2!important}
+.import-error-row td{color:#b91c1c}
+.import-stats{display:flex;gap:16px;font-size:12px;color:var(--muted);padding:8px 0;flex-wrap:wrap}
+.import-stats strong{color:var(--text)}
+.import-sheet-tabs{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.import-sheet-tab{padding:4px 12px;border-radius:4px;font-size:12px;cursor:pointer;border:1px solid #e0ddd5;background:#fff}
+.import-sheet-tab.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.import-preview{max-height:360px;overflow:auto;border:1px solid #e0ddd5;border-radius:6px}
+.import-preview table{font-size:11px}
+.import-preview td,.import-preview th{padding:4px 8px;white-space:nowrap}
+.import-step-indicator{display:flex;gap:8px;margin-bottom:16px;font-size:12px;color:var(--muted)}
+.import-step-indicator .active-step{color:var(--primary);font-weight:700}
 </style>
 </head>
 <body>
@@ -208,6 +223,107 @@ function exportToExcel(data,columns,filename){
   XLSX.writeFile(wb,filename);
 }
 
+// === Excel Import Utilities ===
+function fullWidthToHalf(str){
+  if(!str)return"";
+  return String(str).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/／/g,"/").replace(/：/g,":").replace(/　/g," ");
+}
+function parseExcelDate(raw,yearHint){
+  if(!raw)return null;
+  const s=fullWidthToHalf(String(raw)).trim();
+  // Already yyyy-mm-dd or yyyy/mm/dd
+  let m=s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if(m)return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  // mm/dd (no year) — use yearHint or current year
+  m=s.match(/^(\d{1,2})[\/\-:\.](\d{1,2})$/);
+  if(m){const y=yearHint||new Date().getFullYear();return `${y}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`;}
+  // Excel serial number (number)
+  if(typeof raw==="number"&&raw>40000&&raw<60000){
+    const d=new Date((raw-25569)*86400000);
+    if(!isNaN(d))return d.toISOString().slice(0,10);
+  }
+  return null;
+}
+function getCellValue(sheet,row,col){
+  const addr=XLSX.utils.encode_cell({r:row,c:col});
+  return sheet[addr]?.v;
+}
+function extractDataRows(sheet){
+  const rows=[];const stopWords=["新增","保存","主管","經理","簽核","審核"];
+  const range=XLSX.utils.decode_range(sheet["!ref"]||"A1");
+  for(let r=8;r<=range.e.r;r+=4){
+    const val=getCellValue(sheet,r,0);
+    if(val==null||val==="")break;
+    if(stopWords.some(w=>String(val).includes(w)))break;
+    rows.push(r);
+  }
+  return rows;
+}
+function parseAssemblySheet(sheet,products){
+  const items=[];const errors=[];const staffCodes=new Set();
+  // orderDate from row0, col AS(44)
+  const rawDate=getCellValue(sheet,0,44);
+  const orderDate=parseExcelDate(rawDate);
+  if(!orderDate)return{orderDate:null,items,errors:["無法解析工單日期"],staffCodes};
+  const yearHint=parseInt(orderDate.slice(0,4));
+  const dataRows=extractDataRows(sheet);
+  dataRows.forEach((r,idx)=>{
+    const code=fullWidthToHalf(String(getCellValue(sheet,r,0)||"")).trim();
+    const name=String(getCellValue(sheet,r,6)||"").trim();
+    const qty=parseInt(getCellValue(sheet,r,21));
+    const asmCode1=fullWidthToHalf(String(getCellValue(sheet,r,25)||"")).trim();
+    const asmCode2=fullWidthToHalf(String(getCellValue(sheet,r,27)||"")).trim();
+    const serial=fullWidthToHalf(String(getCellValue(sheet,r,31)||"")).trim();
+    const whDateRaw=getCellValue(sheet,r,33);
+    const whDate=parseExcelDate(whDateRaw,yearHint);
+    const noteRaw=String(getCellValue(sheet,r,45)||"").trim();
+    // Collect staff codes
+    if(asmCode1)staffCodes.add(asmCode1);
+    if(asmCode2)staffCodes.add(asmCode2);
+    // Find product
+    const prod=products.find(p=>p.product_id===code);
+    const errs=[];
+    if(!prod)errs.push("產品編號找不到");
+    if(!qty||isNaN(qty)||qty<=0)errs.push("數量無效");
+    if(prod&&name&&prod.product_name!==name)errs.push(`名稱不符(${prod.product_name})`);
+    const assembler=[asmCode1,asmCode2].filter(Boolean).join(",");
+    const note=[serial?`S/N:${serial}`:"",noteRaw].filter(Boolean).join(" ");
+    items.push({row:idx+1,code,name,qty:qty||0,assembler,assemblerCodes:[asmCode1,asmCode2].filter(Boolean),warehouse_date:whDate,note,product_id:prod?.id||null,product_name:prod?.product_name||name,errors:errs,hasError:errs.some(e=>e==="產品編號找不到"||e==="數量無效")});
+  });
+  return{orderDate,items,errors,staffCodes};
+}
+function parsePackagingSheet(sheet,products,customers){
+  const items=[];const errors=[];const staffCodes=new Set();const customerNames=new Set();
+  const rawDate=getCellValue(sheet,0,43);
+  const orderDate=parseExcelDate(rawDate);
+  if(!orderDate)return{orderDate:null,items,errors:["無法解析工單日期"],staffCodes,customerNames};
+  const yearHint=parseInt(orderDate.slice(0,4));
+  const dataRows=extractDataRows(sheet);
+  dataRows.forEach((r,idx)=>{
+    const code=fullWidthToHalf(String(getCellValue(sheet,r,0)||"")).trim();
+    const name=String(getCellValue(sheet,r,6)||"").trim();
+    const qty=parseInt(getCellValue(sheet,r,21));
+    const custName=String(getCellValue(sheet,r,25)||"").trim();
+    const testerCode=fullWidthToHalf(String(getCellValue(sheet,r,33)||"")).trim();
+    const inspectorCode=fullWidthToHalf(String(getCellValue(sheet,r,35)||"")).trim();
+    const asmDateRaw=getCellValue(sheet,r,37);
+    const asmDate=parseExcelDate(asmDateRaw,yearHint);
+    const noteRaw=String(getCellValue(sheet,r,43)||"").trim();
+    if(testerCode)staffCodes.add(testerCode);
+    if(inspectorCode)staffCodes.add(inspectorCode);
+    const isStock=!custName||custName==="庫存";
+    if(!isStock)customerNames.add(custName);
+    const prod=products.find(p=>p.product_id===code);
+    const errs=[];
+    if(!prod)errs.push("產品編號找不到");
+    if(!qty||isNaN(qty)||qty<=0)errs.push("數量無效");
+    if(prod&&name&&prod.product_name!==name)errs.push(`名稱不符(${prod.product_name})`);
+    items.push({row:idx+1,code,name,qty:qty||0,customerName:isStock?"庫存":custName,testerCode,inspectorCode,assembly_date:asmDate,note:noteRaw,product_id:prod?.id||null,product_name:prod?.product_name||name,is_stock:isStock,errors:errs,hasError:errs.some(e=>e==="產品編號找不到"||e==="數量無效")});
+  });
+  return{orderDate,items,errors,staffCodes,customerNames};
+}
+
 function printSection(title,subtitle){
   const header=document.querySelector('.print-header');
   if(header){header.querySelector('h1').textContent=title;header.querySelector('p').textContent=subtitle||`列印日期: ${new Date().toISOString().slice(0,10)}`;}
@@ -247,6 +363,184 @@ function EditQtyModal({show,onClose,onSave,item,tableName,staff,onAddStaff}){
   if(!show||!item)return null;
   const save=()=>{if(!editedBy.trim()){alert("請選擇修改人員");return;}if(!reason.trim()){alert("請填寫修改原因");return;}if(parseInt(newQty)===0){alert("數量不可為 0，如需移除請使用刪除功能");return;}if(parseInt(newQty)===item.qty){alert("數量未變更");return;}onSave({recordId:item.id,tableName,oldQty:item.qty,newQty:parseInt(newQty),editedBy:editedBy.trim(),reason:reason.trim()});};
   return <div className="modal-overlay" onClick={onClose}><div className="modal" onClick={e=>e.stopPropagation()}><div className="modal-title">✏️ 修改數量</div><div style={{background:"#f8f7f4",borderRadius:6,padding:10,marginBottom:14,fontSize:12}}><div><strong>單號：</strong>{item.orderNo}</div><div><strong>產品：</strong>{item.productCode} - {item.productName}</div></div><div className="modal-field"><label>原始數量</label><div style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,fontSize:18,color:"var(--muted)"}}>{item.qty}</div></div><div className="modal-field"><label>新數量 <span style={{color:"var(--danger)"}}>*</span></label><input type="number" className="input" style={{width:"100%",fontSize:16,fontWeight:700}} min="0" value={newQty} onChange={e=>setNewQty(e.target.value)} autoFocus/></div><div className="modal-field"><label>修改人員 <span style={{color:"var(--danger)"}}>*</span></label><StaffSelect staff={staff} value={editedBy} onChange={setEditedBy} onAdd={onAddStaff} style={{width:"100%"}}/></div><div className="modal-field"><label>修改原因 <span style={{color:"var(--danger)"}}>*</span></label><input className="input" style={{width:"100%"}} value={reason} onChange={e=>setReason(e.target.value)} placeholder="例：數量計算錯誤、補數、客戶要求變更..." onKeyDown={e=>e.key==="Enter"&&save()}/></div><div style={{fontSize:11,color:"var(--muted)",marginBottom:12}}>修改日期：{new Date().toISOString().slice(0,10)} · 所有修改記錄將被保存</div><div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button className="btn btn-secondary" onClick={onClose}>取消</button><button className="btn btn-primary" onClick={save}>確認修改</button></div></div></div>;
+}
+
+function ImportExcelModal({show,type,onClose,products,customers,staff,toast,onImportDone,onAddStaff}){
+  const[step,setStep]=useState(1);const[sheets,setSheets]=useState([]);const[activeSheet,setActiveSheet]=useState(0);
+  const[staffMapping,setStaffMapping]=useState({});const[customerMapping,setCustomerMapping]=useState({});
+  const[importing,setImporting]=useState(false);const[result,setResult]=useState(null);
+  const fileRef=useRef(null);
+  const isAsm=type==="assembly";
+  const label=isAsm?"組裝":"包裝";
+  const keyword=isAsm?"組裝":"包裝";
+
+  useEffect(()=>{if(show){setStep(1);setSheets([]);setActiveSheet(0);setStaffMapping({});setCustomerMapping({});setImporting(false);setResult(null);}},[show]);
+
+  const handleFile=e=>{
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:"array"});
+        const parsed=[];
+        wb.SheetNames.forEach(name=>{
+          const ws=wb.Sheets[name];
+          if(!ws)return;
+          // Try parsing regardless of sheet name, let user decide
+          const matchesKeyword=name.includes(keyword);
+          let data;
+          if(isAsm)data=parseAssemblySheet(ws,products);
+          else data=parsePackagingSheet(ws,products,customers||[]);
+          if(data.items.length>0||matchesKeyword)parsed.push({name,data});
+        });
+        if(!parsed.length){toast("未找到可解析的工作表","error");return;}
+        setSheets(parsed);
+        // Build initial staff mapping
+        const sm={};
+        parsed.forEach(s=>s.data.staffCodes.forEach(code=>{
+          if(!sm[code]){const found=staff.find(st=>st.name===code);sm[code]=found?found.name:"";}
+        }));
+        setStaffMapping(sm);
+        // Build initial customer mapping (packaging only)
+        if(!isAsm){
+          const cm={};
+          parsed.forEach(s=>(s.data.customerNames||new Set()).forEach(cn=>{
+            if(!cm[cn]){const found=(customers||[]).find(c=>c.name===cn);cm[cn]=found?found.id:"";}
+          }));
+          setCustomerMapping(cm);
+        }
+        setStep(2);
+      }catch(ex){toast("Excel 解析失敗: "+ex.message,"error");}
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const doImport=async()=>{
+    setImporting(true);let success=0,failed=0;
+    try{
+      for(const s of sheets){
+        const d=s.data;
+        if(!d.orderDate){failed+=d.items.length;continue;}
+        const orderBody=isAsm?{order_date:d.orderDate,status:"draft"}:{order_date:d.orderDate,status:"draft"};
+        let order;
+        try{
+          const tableName=isAsm?"assembly_orders":"packaging_orders";
+          [order]=await supaFetch(tableName,{method:"POST",body:orderBody});
+        }catch(ex){failed+=d.items.length;continue;}
+        for(const it of d.items){
+          if(it.hasError){failed++;continue;}
+          try{
+            if(isAsm){
+              const assemblerNames=it.assemblerCodes.map(c=>staffMapping[c]||c).filter(Boolean).join(",");
+              await supaFetch("assembly_items",{method:"POST",body:{order_id:order.id,product_id:it.product_id,qty:it.qty,assembler:assemblerNames,warehouse_date:it.warehouse_date||null,note:it.note||null}});
+            }else{
+              const testerName=staffMapping[it.testerCode]||it.testerCode||"";
+              const inspectorName=staffMapping[it.inspectorCode]||it.inspectorCode||"";
+              const custId=it.is_stock?null:(customerMapping[it.customerName]||null);
+              await supaFetch("packaging_items",{method:"POST",body:{order_id:order.id,product_id:it.product_id,qty:it.qty,customer_id:custId,is_stock:it.is_stock,tester:testerName,inspector:inspectorName,assembly_date:it.assembly_date||null,note:it.note||null}});
+            }
+            success++;
+          }catch(ex){failed++;}
+        }
+      }
+      setResult({success,failed});setStep(3);
+      if(success>0)onImportDone();
+    }catch(ex){toast("匯入過程發生錯誤: "+ex.message,"error");}
+    setImporting(false);
+  };
+
+  if(!show)return null;
+  const cur=sheets[activeSheet]?.data;
+  const totalItems=sheets.reduce((s,sh)=>s+sh.data.items.length,0);
+  const totalErrors=sheets.reduce((s,sh)=>s+sh.data.items.filter(i=>i.hasError).length,0);
+  const allStaffCodes=Object.keys(staffMapping);
+  const allCustNames=Object.keys(customerMapping);
+  const hasUnmappedStaff=allStaffCodes.some(c=>!staffMapping[c]);
+  const hasUnmappedCust=!isAsm&&allCustNames.some(c=>!customerMapping[c]);
+
+  return <div className="modal-overlay" onClick={onClose}><div className="modal" style={{maxWidth:900,width:"95vw",maxHeight:"90vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+    <div className="modal-title">📤 匯入{label} Excel</div>
+    <div className="import-step-indicator">
+      <span className={step===1?"active-step":""}>1.選擇檔案</span>→
+      <span className={step===2?"active-step":""}>2.對應預覽</span>→
+      <span className={step===3?"active-step":""}>3.結果</span>
+    </div>
+
+    {step===1&&<div style={{textAlign:"center",padding:"30px 0"}}>
+      <p style={{marginBottom:16,color:"var(--muted)",fontSize:13}}>選擇{label}報表 Excel 檔案 (.xlsx / .xls)</p>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:"none"}}/>
+      <button className="btn btn-primary" onClick={()=>fileRef.current?.click()}>選擇檔案</button>
+    </div>}
+
+    {step===2&&cur&&<div>
+      {/* Staff mapping */}
+      {allStaffCodes.length>0&&<div className="import-mapping">
+        <div style={{fontWeight:600,fontSize:13,marginBottom:8}}>人員代碼對應 ({allStaffCodes.length} 位)</div>
+        {allStaffCodes.map(code=><div key={code} className="import-mapping-row">
+          <span className="import-mapping-code">{code}</span><span>→</span>
+          <StaffSelect staff={staff} value={staffMapping[code]||""} onChange={v=>setStaffMapping(p=>({...p,[code]:v}))} onAdd={onAddStaff} placeholder="選擇人員" style={{width:180}}/>
+          {!staffMapping[code]&&<span style={{fontSize:11,color:"var(--warning)"}}>未對應</span>}
+        </div>)}
+      </div>}
+      {/* Customer mapping (packaging) */}
+      {!isAsm&&allCustNames.length>0&&<div className="import-mapping">
+        <div style={{fontWeight:600,fontSize:13,marginBottom:8}}>客戶對應 ({allCustNames.length} 位)</div>
+        {allCustNames.map(cn=><div key={cn} className="import-mapping-row">
+          <span className="import-mapping-code">{cn}</span><span>→</span>
+          <select className="input" style={{width:200}} value={customerMapping[cn]||""} onChange={e=>setCustomerMapping(p=>({...p,[cn]:e.target.value}))}>
+            <option value="">-- 選擇客戶 --</option>
+            {(customers||[]).map(c=><option key={c.id} value={c.id}>{c.customer_code?c.customer_code+" - ":""}{c.name}</option>)}
+          </select>
+          {!customerMapping[cn]&&<span style={{fontSize:11,color:"var(--warning)"}}>未對應</span>}
+        </div>)}
+      </div>}
+      {/* Sheet tabs */}
+      {sheets.length>1&&<div className="import-sheet-tabs">
+        {sheets.map((s,i)=><span key={i} className={`import-sheet-tab ${activeSheet===i?"active":""}`} onClick={()=>setActiveSheet(i)}>{s.name}</span>)}
+      </div>}
+      {/* Stats */}
+      <div className="import-stats">
+        <span>工作表: <strong>{sheets[activeSheet]?.name}</strong></span>
+        <span>日期: <strong>{cur.orderDate||"無法解析"}</strong></span>
+        <span>解析: <strong>{cur.items.length}</strong> 筆</span>
+        <span>錯誤: <strong style={{color:cur.items.filter(i=>i.hasError).length?"var(--danger)":"inherit"}}>{cur.items.filter(i=>i.hasError).length}</strong> 筆</span>
+      </div>
+      {/* Preview table */}
+      <div className="import-preview">
+        <table><thead><tr>
+          <th>#</th><th>產品編號</th><th>產品名稱</th><th>數量</th>
+          {isAsm?<><th>組裝人員</th><th>入庫日期</th></>:<><th>客戶</th><th>測試員</th><th>檢驗員</th><th>組裝日期</th></>}
+          <th>備註</th><th>狀態</th>
+        </tr></thead><tbody>
+          {cur.items.map((it,i)=><tr key={i} className={it.hasError?"import-error-row":""}>
+            <td>{it.row}</td><td><code>{it.code}</code></td><td>{it.product_name||it.name}</td>
+            <td style={{fontWeight:700}}>{it.qty}</td>
+            {isAsm?<><td>{it.assemblerCodes?.map(c=>staffMapping[c]||c).join(", ")}</td><td>{it.warehouse_date||"-"}</td></>
+              :<><td>{it.customerName}</td><td>{staffMapping[it.testerCode]||it.testerCode||"-"}</td><td>{staffMapping[it.inspectorCode]||it.inspectorCode||"-"}</td><td>{it.assembly_date||"-"}</td></>}
+            <td style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis"}}>{it.note||""}</td>
+            <td>{it.errors.length?<span style={{color:"var(--danger)",fontSize:11}}>{it.errors.join("; ")}</span>:"✓"}</td>
+          </tr>)}
+        </tbody></table>
+      </div>
+      {/* Action bar */}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+        <button className="btn btn-secondary" onClick={()=>{setStep(1);setSheets([]);}}>重選檔案</button>
+        <button className="btn btn-primary" onClick={doImport} disabled={importing||totalItems===totalErrors}>
+          {importing?"匯入中...":hasUnmappedStaff||hasUnmappedCust?`確認匯入 (${totalItems-totalErrors} 筆，部分未對應)`:`確認匯入 (${totalItems-totalErrors} 筆)`}
+        </button>
+      </div>
+    </div>}
+
+    {step===3&&result&&<div style={{textAlign:"center",padding:"24px 0"}}>
+      <div style={{fontSize:48,marginBottom:12}}>{result.failed===0?"✅":"⚠️"}</div>
+      <div style={{fontSize:16,fontWeight:600,marginBottom:8}}>匯入完成</div>
+      <div className="import-stats" style={{justifyContent:"center"}}>
+        <span>成功: <strong style={{color:"var(--success)"}}>{result.success}</strong> 筆</span>
+        {result.failed>0&&<span>失敗/跳過: <strong style={{color:"var(--danger)"}}>{result.failed}</strong> 筆</span>}
+      </div>
+      <button className="btn btn-primary" style={{marginTop:16}} onClick={onClose}>關閉</button>
+    </div>}
+  </div></div>;
 }
 
 // Shared: load assembly/packaging/conversion items for a product within a date range
@@ -673,7 +967,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
 function AssemblyTab({products,staff,toast,reloadStaff}){
   const[orders,setOrders]=useState([]);const[items,setItems]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);const[showForm,setShowForm]=useState(false);const[orderDate,setOrderDate]=useState(new Date().toISOString().slice(0,10));const[newItems,setNewItems]=useState([{product_id:"",qty:1,assembler:"",warehouse_date:"",note:""}]);
-  const[staffModal,setStaffModal]=useState(false);const[editModal,setEditModal]=useState({show:false,item:null});
+  const[staffModal,setStaffModal]=useState(false);const[editModal,setEditModal]=useState({show:false,item:null});const[showImport,setShowImport]=useState(false);
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetchAll("assembly_orders","select=*&order=order_date.desc,created_at.desc")||[]);}catch(e){}setLoading(false);},[]);
   useEffect(()=>{load();},[load]);
   const loadItems=async id=>{try{setItems(await supaFetchAll("assembly_items",`select=*,products(product_id,product_name)&order_id=eq.${id}`)||[]);setSel(id);}catch(e){}};
@@ -684,14 +978,14 @@ function AssemblyTab({products,staff,toast,reloadStaff}){
   const addStaff=async(name,role)=>{try{await supaFetch("staff",{method:"POST",body:{name,role}});toast(`人員「${name}」新增成功`,"success");reloadStaff();}catch(e){toast("新增失敗: "+e.message,"error");}};
   const deleteItem=async(it)=>{const conf=await supaFetch("reconciliation_confirmed",{query:`select=id&product_id=eq.${it.product_id}`});if(conf&&conf.length>0){toast("此產品已在核對報告中確認，無法刪除","error");return;}if(!confirm("確定刪除此筆明細？此操作不可復原。"))return;try{await supaDelete("assembly_items",`id=eq.${it.id}`);toast("已刪除","success");const remaining=await supaFetch("assembly_items",{query:`select=id&order_id=eq.${sel}&limit=1`});if(!remaining||remaining.length===0){if(confirm("此單據已無明細，是否一併刪除整張單據？")){await supaDelete("assembly_orders",`id=eq.${sel}`);setSel(null);load();return;}}loadItems(sel);}catch(e){toast("刪除失敗: "+e.message,"error");}};
   const sC={draft:"neutral",submitted:"info",approved:"success",rejected:"error"};const sL={draft:"草稿",submitted:"已送簽",approved:"已核准",rejected:"已退回"};const selOrder=orders.find(o=>o.id===sel);
-  return <div><AddStaffModal show={staffModal} defaultRole="assembler" onClose={()=>setStaffModal(false)} onSave={addStaff}/><EditQtyModal show={editModal.show} item={editModal.item} tableName="assembly_items" staff={staff} onClose={()=>setEditModal({show:false,item:null})} onSave={handleEdit} onAddStaff={()=>setStaffModal(true)}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}><span style={{fontSize:12,color:"var(--muted)"}}>共 {orders.length} 筆組裝單</span><div className="action-bar">{sel&&items.length>0&&<><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>{exportToExcel(items,[{label:"產品編號",value:r=>r.products?.product_id},{label:"產品名稱",value:r=>r.products?.product_name},{label:"數量",value:r=>r.qty},{label:"組裝人員",value:r=>r.assembler||""},{label:"入庫日期",value:r=>r.warehouse_date||""},{label:"備註",value:r=>r.note||""}],`組裝單_${selOrder?.order_no||"export"}.xlsx`);toast("已匯出","success");}}>📥 Excel</button><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>printSection(`組裝單 ${selOrder?.order_no}`,`組裝日期: ${selOrder?.order_date}`)}>🖨 列印</button></>}<button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>{showForm?"取消":"+ 新增組裝單"}</button></div></div>
+  return <div><AddStaffModal show={staffModal} defaultRole="assembler" onClose={()=>setStaffModal(false)} onSave={addStaff}/><EditQtyModal show={editModal.show} item={editModal.item} tableName="assembly_items" staff={staff} onClose={()=>setEditModal({show:false,item:null})} onSave={handleEdit} onAddStaff={()=>setStaffModal(true)}/><ImportExcelModal show={showImport} type="assembly" onClose={()=>setShowImport(false)} products={products} staff={staff} toast={toast} onImportDone={load} onAddStaff={()=>setStaffModal(true)}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}><span style={{fontSize:12,color:"var(--muted)"}}>共 {orders.length} 筆組裝單</span><div className="action-bar"><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>setShowImport(true)}>📤 匯入Excel</button>{sel&&items.length>0&&<><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>{exportToExcel(items,[{label:"產品編號",value:r=>r.products?.product_id},{label:"產品名稱",value:r=>r.products?.product_name},{label:"數量",value:r=>r.qty},{label:"組裝人員",value:r=>r.assembler||""},{label:"入庫日期",value:r=>r.warehouse_date||""},{label:"備註",value:r=>r.note||""}],`組裝單_${selOrder?.order_no||"export"}.xlsx`);toast("已匯出","success");}}>📥 Excel</button><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>printSection(`組裝單 ${selOrder?.order_no}`,`組裝日期: ${selOrder?.order_date}`)}>🖨 列印</button></>}<button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>{showForm?"取消":"+ 新增組裝單"}</button></div></div>
   {showForm&&<div className="form-box"><div className="form-title">新增組裝單</div><div className="form-row" style={{marginBottom:12}}><span className="filter-label">組裝日期：</span><input type="date" className="input" value={orderDate} onChange={e=>setOrderDate(e.target.value)} style={{width:160}}/></div>{newItems.map((it,idx)=><div key={idx} className="form-row"><ProductSearch products={products} value={it.product_id} onChange={v=>{const n=[...newItems];n[idx].product_id=v;setNewItems(n);}} style={{minWidth:240,flex:2}}/><input type="number" className="input" style={{width:65}} min="1" value={it.qty} onChange={e=>{const n=[...newItems];n[idx].qty=e.target.value;setNewItems(n);}} placeholder="數量"/><StaffSelect staff={staff} value={it.assembler} onChange={v=>{const n=[...newItems];n[idx].assembler=v;setNewItems(n);}} onAdd={()=>setStaffModal(true)} roleFilter="assembler" placeholder="組裝人員" multi style={{width:180}}/><input type="date" className="input" style={{width:140}} value={it.warehouse_date} onChange={e=>{const n=[...newItems];n[idx].warehouse_date=e.target.value;setNewItems(n);}}/><input className="input" style={{flex:1,minWidth:80}} value={it.note} onChange={e=>{const n=[...newItems];n[idx].note=e.target.value;setNewItems(n);}} placeholder="備註"/>{newItems.length>1&&<button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>setNewItems(newItems.filter((_,i)=>i!==idx))}>✕</button>}</div>)}<div style={{display:"flex",gap:8,marginTop:10}}><button className="btn btn-secondary btn-sm" onClick={()=>setNewItems([...newItems,{product_id:"",qty:1,assembler:"",warehouse_date:"",note:""}])}>+ 新增產品行</button><button className="btn btn-primary" onClick={create}>確認建立</button></div></div>}
   {loading?<div className="spinner"/>:<div className="split-view"><div className="split-left">{orders.map(o=><div key={o.id} className={`order-card ${sel===o.id?"selected":""}`} onClick={()=>loadItems(o.id)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><code className="order-no">{o.order_no}</code><Badge type={sC[o.status]}>{sL[o.status]}</Badge></div><div className="order-date">📅 {o.order_date}</div></div>)}{!orders.length&&<div style={{textAlign:"center",padding:30,color:"var(--muted)"}}>尚無組裝單</div>}</div>{sel&&<div className="split-right">{selOrder&&selOrder.status==="draft"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-primary btn-sm" style={{background:"var(--success)"}} onClick={()=>approveOrder(sel)}>✓ 核准</button><button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>{if(confirm("確定要刪除此組裝單？")){(async()=>{try{const its=await supaFetch("assembly_items",{query:`select=product_id&order_id=eq.${sel}`});for(const it of(its||[])){const conf=await supaFetch("reconciliation_confirmed",{query:`select=id&product_id=eq.${it.product_id}&limit=1`});if(conf&&conf.length>0){toast("此單據含有已確認核對的產品，無法刪除","error");return;}}await supaDelete("assembly_items",`order_id=eq.${sel}`);await supaDelete("assembly_orders",`id=eq.${sel}`);toast("已刪除","success");setSel(null);load();}catch(e){toast("刪除失敗: "+e.message,"error");}})();}}}>🗑 刪除</button></div>}{selOrder&&selOrder.status==="approved"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-secondary btn-sm" onClick={()=>revertDraft(sel)}>↩ 退回草稿</button></div>}<div className="table-wrap"><table><thead><tr>{["產品編號","產品名稱","數量","組裝人員","入庫日期","備註",""].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{items.map(it=><tr key={it.id}><td><code style={{fontWeight:600}}>{it.products?.product_id}</code></td><td>{it.products?.product_name}</td><td style={{fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{it.qty}</td><td>{it.assembler||"-"}</td><td>{it.warehouse_date||"-"}</td><td>{it.note||"-"}</td><td><button className="btn-edit" onClick={()=>setEditModal({show:true,item:{id:it.id,qty:it.qty,orderNo:selOrder?.order_no,productCode:it.products?.product_id,productName:it.products?.product_name}})}>修改</button><button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)",marginLeft:4}} onClick={()=>deleteItem(it)}>刪除</button></td></tr>)}</tbody></table></div></div>}</div>}</div>;
 }
 
 function PackagingTab({products,customers,staff,toast,reloadStaff}){
   const[orders,setOrders]=useState([]);const[items,setItems]=useState([]);const[sel,setSel]=useState(null);const[loading,setLoading]=useState(true);const[showForm,setShowForm]=useState(false);const[orderDate,setOrderDate]=useState(new Date().toISOString().slice(0,10));const[orderCustomerId,setOrderCustomerId]=useState("");const[newItems,setNewItems]=useState([{product_id:"",qty:1,customer_id:"",tester:"",inspector:"",assembly_date:"",note:""}]);
-  const[staffModal,setStaffModal]=useState({show:false,role:"tester"});const[editModal,setEditModal]=useState({show:false,item:null});
+  const[staffModal,setStaffModal]=useState({show:false,role:"tester"});const[editModal,setEditModal]=useState({show:false,item:null});const[showImport,setShowImport]=useState(false);
   const[customerFilter,setCustomerFilter]=useState("");
   const load=useCallback(async()=>{setLoading(true);try{setOrders(await supaFetchAll("packaging_orders","select=*,customers(name,customer_code)&order=order_date.desc,created_at.desc")||[]);}catch(e){}setLoading(false);},[]);
   useEffect(()=>{load();},[load]);
@@ -705,7 +999,7 @@ function PackagingTab({products,customers,staff,toast,reloadStaff}){
   const sC={draft:"neutral",submitted:"info",approved:"success",rejected:"error"};const sL={draft:"草稿",submitted:"已送簽",approved:"已核准",rejected:"已退回"};
   const filteredOrders=customerFilter?orders.filter(o=>o.customer_id===customerFilter):orders;
   const selOrder=orders.find(o=>o.id===sel);
-  return <div><AddStaffModal show={staffModal.show} defaultRole={staffModal.role} onClose={()=>setStaffModal({show:false,role:"tester"})} onSave={addStaff}/><EditQtyModal show={editModal.show} item={editModal.item} tableName="packaging_items" staff={staff} onClose={()=>setEditModal({show:false,item:null})} onSave={handleEdit} onAddStaff={()=>setStaffModal({show:true,role:"general"})}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}><div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:12,color:"var(--muted)"}}>共 {orders.length} 筆包裝單{customerFilter?` (篩選: ${filteredOrders.length} 筆)`:""}</span><span className="filter-label">客戶：</span><select className="input" style={{width:140}} value={customerFilter} onChange={e=>setCustomerFilter(e.target.value)}><option value="">全部客戶</option>{customers.map(cu=><option key={cu.id} value={cu.id}>{cu.customer_code?cu.customer_code+" - ":""}{cu.name}</option>)}</select></div><div className="action-bar">{sel&&items.length>0&&<><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>{exportToExcel(items,[{label:"產品編號",value:r=>r.products?.product_id},{label:"產品名稱",value:r=>r.products?.product_name},{label:"數量",value:r=>r.qty},{label:"客戶",value:r=>r.is_stock?"庫存":r.customers?.name||""},{label:"測試人員",value:r=>r.tester||""},{label:"檢驗人員",value:r=>r.inspector||""},{label:"組裝日期",value:r=>r.assembly_date||""},{label:"備註",value:r=>r.note||""}],`包裝單_${selOrder?.order_no||"export"}.xlsx`);toast("已匯出","success");}}>📥 Excel</button><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>printSection(`包裝出貨入庫單 ${selOrder?.order_no}`,`包裝日期: ${selOrder?.order_date}`)}>🖨 列印</button></>}<button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>{showForm?"取消":"+ 新增包裝單"}</button></div></div>
+  return <div><AddStaffModal show={staffModal.show} defaultRole={staffModal.role} onClose={()=>setStaffModal({show:false,role:"tester"})} onSave={addStaff}/><EditQtyModal show={editModal.show} item={editModal.item} tableName="packaging_items" staff={staff} onClose={()=>setEditModal({show:false,item:null})} onSave={handleEdit} onAddStaff={()=>setStaffModal({show:true,role:"general"})}/><ImportExcelModal show={showImport} type="packaging" onClose={()=>setShowImport(false)} products={products} customers={customers} staff={staff} toast={toast} onImportDone={load} onAddStaff={()=>setStaffModal({show:true,role:"general"})}/><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}><div style={{display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:12,color:"var(--muted)"}}>共 {orders.length} 筆包裝單{customerFilter?` (篩選: ${filteredOrders.length} 筆)`:""}</span><span className="filter-label">客戶：</span><select className="input" style={{width:140}} value={customerFilter} onChange={e=>setCustomerFilter(e.target.value)}><option value="">全部客戶</option>{customers.map(cu=><option key={cu.id} value={cu.id}>{cu.customer_code?cu.customer_code+" - ":""}{cu.name}</option>)}</select></div><div className="action-bar"><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>setShowImport(true)}>📤 匯入Excel</button>{sel&&items.length>0&&<><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>{exportToExcel(items,[{label:"產品編號",value:r=>r.products?.product_id},{label:"產品名稱",value:r=>r.products?.product_name},{label:"數量",value:r=>r.qty},{label:"客戶",value:r=>r.is_stock?"庫存":r.customers?.name||""},{label:"測試人員",value:r=>r.tester||""},{label:"檢驗人員",value:r=>r.inspector||""},{label:"組裝日期",value:r=>r.assembly_date||""},{label:"備註",value:r=>r.note||""}],`包裝單_${selOrder?.order_no||"export"}.xlsx`);toast("已匯出","success");}}>📥 Excel</button><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>printSection(`包裝出貨入庫單 ${selOrder?.order_no}`,`包裝日期: ${selOrder?.order_date}`)}>🖨 列印</button></>}<button className="btn btn-primary" onClick={()=>setShowForm(!showForm)}>{showForm?"取消":"+ 新增包裝單"}</button></div></div>
   {showForm&&<div className="form-box"><div className="form-title">新增包裝出貨入庫單</div><div className="form-row" style={{marginBottom:12}}><span className="filter-label">包裝日期：</span><input type="date" className="input" value={orderDate} onChange={e=>setOrderDate(e.target.value)} style={{width:160}}/><span className="filter-label">客戶：</span><select className="input" style={{width:160}} value={orderCustomerId} onChange={e=>setOrderCustomerId(e.target.value)}><option value="">庫存（無客戶）</option>{customers.map(cu=><option key={cu.id} value={cu.id}>{cu.customer_code?cu.customer_code+" - ":""}{cu.name}</option>)}</select></div>{newItems.map((it,idx)=><div key={idx} className="form-row"><ProductSearch products={products} value={it.product_id} onChange={v=>{const n=[...newItems];n[idx].product_id=v;setNewItems(n);}} style={{minWidth:200,flex:2}}/><input type="number" className="input" style={{width:60}} min="1" value={it.qty} onChange={e=>{const n=[...newItems];n[idx].qty=e.target.value;setNewItems(n);}} placeholder="數量"/><select className="input" style={{width:100}} value={it.customer_id} onChange={e=>{const n=[...newItems];n[idx].customer_id=e.target.value;setNewItems(n);}}><option value="">庫存</option>{customers.map(cu=><option key={cu.id} value={cu.id}>{cu.name}</option>)}</select><StaffSelect staff={staff} value={it.tester} onChange={v=>{const n=[...newItems];n[idx].tester=v;setNewItems(n);}} onAdd={()=>setStaffModal({show:true,role:"tester"})} roleFilter="tester" placeholder="測試人員" multi style={{width:160}}/><StaffSelect staff={staff} value={it.inspector} onChange={v=>{const n=[...newItems];n[idx].inspector=v;setNewItems(n);}} onAdd={()=>setStaffModal({show:true,role:"inspector"})} roleFilter="inspector" placeholder="檢驗人員" style={{width:120}}/><input type="date" className="input" style={{width:135}} value={it.assembly_date} onChange={e=>{const n=[...newItems];n[idx].assembly_date=e.target.value;setNewItems(n);}}/><input className="input" style={{flex:1,minWidth:60}} value={it.note} onChange={e=>{const n=[...newItems];n[idx].note=e.target.value;setNewItems(n);}} placeholder="備註"/>{newItems.length>1&&<button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>setNewItems(newItems.filter((_,i)=>i!==idx))}>✕</button>}</div>)}<div style={{display:"flex",gap:8,marginTop:10}}><button className="btn btn-secondary btn-sm" onClick={()=>setNewItems([...newItems,{product_id:"",qty:1,customer_id:"",tester:"",inspector:"",assembly_date:"",note:""}])}>+ 新增產品行</button><button className="btn btn-primary" onClick={create}>確認建立</button></div></div>}
   {loading?<div className="spinner"/>:<div className="split-view"><div className="split-left">{filteredOrders.map(o=><div key={o.id} className={`order-card ${sel===o.id?"selected":""}`} onClick={()=>loadItems(o.id)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><code className="order-no">{o.order_no}</code><Badge type={sC[o.status]}>{sL[o.status]}</Badge></div><div className="order-date">📅 {o.order_date}{o.customers?<span style={{marginLeft:8,color:"var(--accent)",fontWeight:600}}>{o.customers.customer_code||o.customers.name}</span>:""}</div></div>)}{!filteredOrders.length&&<div style={{textAlign:"center",padding:30,color:"var(--muted)"}}>{customerFilter?"此客戶無包裝單":"尚無包裝單"}</div>}</div>{sel&&<div className="split-right">{selOrder&&selOrder.status==="draft"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-primary btn-sm" style={{background:"var(--success)"}} onClick={()=>approveOrder(sel)}>✓ 核准</button><button className="btn btn-secondary btn-sm" style={{color:"var(--danger)"}} onClick={()=>{if(confirm("確定要刪除此包裝單？")){(async()=>{try{const its=await supaFetch("packaging_items",{query:`select=product_id&order_id=eq.${sel}`});for(const it of(its||[])){const conf=await supaFetch("reconciliation_confirmed",{query:`select=id&product_id=eq.${it.product_id}&limit=1`});if(conf&&conf.length>0){toast("此單據含有已確認核對的產品，無法刪除","error");return;}}await supaDelete("packaging_items",`order_id=eq.${sel}`);await supaDelete("packaging_orders",`id=eq.${sel}`);toast("已刪除","success");setSel(null);load();}catch(e){toast("刪除失敗: "+e.message,"error");}})();}}}>🗑 刪除</button></div>}{selOrder&&selOrder.status==="approved"&&<div style={{display:"flex",gap:8,marginBottom:10}}><button className="btn btn-secondary btn-sm" onClick={()=>revertDraft(sel)}>↩ 退回草稿</button></div>}<div className="table-wrap"><table><thead><tr>{["產品編號","產品名稱","數量","客戶","測試人員","檢驗人員","組裝日期","備註",""].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{items.map(it=><tr key={it.id}><td><code style={{fontWeight:600}}>{it.products?.product_id}</code></td><td>{it.products?.product_name}</td><td style={{fontWeight:700,fontFamily:"'JetBrains Mono',monospace"}}>{it.qty}</td><td>{it.is_stock?"庫存":it.customers?.name||"-"}</td><td>{it.tester||"-"}</td><td>{it.inspector||"-"}</td><td>{it.assembly_date||"-"}</td><td>{it.note||"-"}</td><td><button className="btn-edit" onClick={()=>setEditModal({show:true,item:{id:it.id,qty:it.qty,orderNo:selOrder?.order_no,productCode:it.products?.product_id,productName:it.products?.product_name}})}>修改</button><button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)",marginLeft:4}} onClick={()=>deleteItem(it)}>刪除</button></td></tr>)}</tbody></table></div></div>}</div>}</div>;
 }
