@@ -3,8 +3,14 @@
 -- Execute this in Supabase SQL Editor
 -- ============================================================
 
+-- 0. 清除舊版（可重複執行）
+DROP TRIGGER IF EXISTS set_conversion_order_no ON conversion_orders;
+DROP FUNCTION IF EXISTS generate_conversion_order_no();
+DROP POLICY IF EXISTS anon_all ON conversion_orders;
+DROP TABLE IF EXISTS conversion_orders;
+
 -- 1. 建表
-CREATE TABLE IF NOT EXISTS conversion_orders (
+CREATE TABLE conversion_orders (
   id               UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   order_no         TEXT UNIQUE,
   conversion_date  DATE NOT NULL DEFAULT CURRENT_DATE,
