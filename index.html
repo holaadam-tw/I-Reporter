@@ -378,7 +378,7 @@ function EditFullItemModal({show,onClose,onSave,item,type,products,customers,sta
     else setForm({product_id:item.product_id||"",qty:item.qty||1,customer_id:item.customer_id||"",is_stock:item.is_stock??true,tester:item.tester||"",inspector:item.inspector||"",assembly_date:item.assembly_date||"",note:item.note||""});
   }},[item,type]);
   if(!show||!item)return null;
-  const save=()=>{if(parseInt(form.qty)<=0){alert("數量必須大於 0");return;}if(!form.product_id){alert("請選擇產品");return;}onSave(form);};
+  const save=()=>{const q=parseInt(form.qty);if(!q||q<=0){alert("數量不可為 0，請使用刪除功能");return;}if(!form.product_id){alert("請選擇產品");return;}onSave(form);};
   return <div className="modal-overlay" onClick={onClose}><div className="modal modal-wide" onClick={e=>e.stopPropagation()}>
     <div className="modal-title">{item.id?"✏️ 修改明細":"➕ 新增明細"}</div>
     <div className="modal-field"><label>產品</label><ProductSearch products={products} value={form.product_id} onChange={v=>setForm({...form,product_id:v})} style={{width:"100%"}}/></div>
@@ -801,6 +801,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt}),
       supaFetch("reconciliation_confirmed",{query:`select=id,product_id,assembly_qty,packaging_qty,confirmed_at,confirmed_by,confirmed_item_ids,date_from,date_to&date_from=lte.${dt}&date_to=gte.${df}`})
     ]);
+    console.log('RPC result count:', (rpcData||[]).length);
     setData(adjustWithConfirmed(rpcData||[],confData||[]));
   }catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
@@ -908,7 +909,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const statusFilter=r=>{if(filter==="all")return true;if(filter==="matched")return r.status==="matched";if(filter==="mismatch")return r.status==="qty_mismatch";if(filter==="missing")return r.status==="missing_pkg"||r.status==="missing_asm";if(filter==="wip")return r.status==="wip_normal";if(filter==="over")return r.status==="over_packaged";return true;};
   const colFilter=r=>{for(const[k,v] of Object.entries(colSearch)){if(!v)continue;if(!String(r[k]||"").toLowerCase().includes(v.toLowerCase()))return false;}return true;};
   const hiddenFilter=r=>{if(showHidden)return true;return !r.hidden;};
-  const matchedFilter=r=>{if(showMatched)return true;if(filter==="matched")return true;return r.status!=="matched";};
+  const matchedFilter=r=>{if(showMatched)return true;if(filter==="all"||filter==="matched")return true;return r.status!=="matched";};
 
   const statusOrder={missing_pkg:0,missing_asm:1,over_packaged:2,qty_mismatch:3,wip_normal:4,matched:5};
   const sortFn=(a,b)=>{let va,vb;if(sortCol==="status"){va=statusOrder[a.status]??6;vb=statusOrder[b.status]??6;}else if(["assembly_qty","packaging_qty","diff"].includes(sortCol)){va=Number(a[sortCol])||0;vb=Number(b[sortCol])||0;}else if(sortCol==="order_date"){va=a.order_date||"9999";vb=b.order_date||"9999";}else{va=String(a[sortCol]||"").toLowerCase();vb=String(b[sortCol]||"").toLowerCase();}if(va<vb)return sortDir==="asc"?-1:1;if(va>vb)return sortDir==="asc"?1:-1;return 0;};
@@ -958,7 +959,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     {loading?<div className="spinner"/>:filtered.length===0?<div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>無符合資料</div>:
     <div className="table-wrap"><table>
       <thead><tr><th style={{width:30}}></th><SortTh col="order_date">日期</SortTh><SortTh col="product_code">產品編號</SortTh><SortTh col="product_name">產品名稱</SortTh><SortTh col="assembly_qty" style={{textAlign:"right"}}>組裝數</SortTh><SortTh col="packaging_qty" style={{textAlign:"right"}}>包裝數</SortTh><SortTh col="diff" style={{textAlign:"right"}}>差異</SortTh><SortTh col="status">狀態</SortTh><th style={{width:130}}>處理</th></tr>
-      <tr style={{background:"#1a3a2e"}}><th></th><th></th><th><input className="input" style={{width:"100%",padding:"3px 6px",fontSize:11}} placeholder="搜尋..." value={colSearch.product_code} onChange={e=>setColSearch({...colSearch,product_code:e.target.value})}/></th><th><input className="input" style={{width:"100%",padding:"3px 6px",fontSize:11}} placeholder="搜尋..." value={colSearch.product_name} onChange={e=>setColSearch({...colSearch,product_name:e.target.value})}/></th><th></th><th></th><th></th><th><input className="input" style={{width:"100%",padding:"3px 6px",fontSize:11}} placeholder="搜尋..." value={colSearch.status_desc} onChange={e=>setColSearch({...colSearch,status_desc:e.target.value})}/></th><th></th></tr></thead>
+      <tr style={{background:"#1a3a2e"}}><th></th><th></th><th><input className="input" style={{width:"100%",padding:"3px 6px",fontSize:11}} placeholder="搜尋..." value={colSearch.product_code} onClick={e=>e.stopPropagation()} onFocus={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();setColSearch({...colSearch,product_code:e.target.value})}}/></th><th><input className="input" style={{width:"100%",padding:"3px 6px",fontSize:11}} placeholder="搜尋..." value={colSearch.product_name} onClick={e=>e.stopPropagation()} onFocus={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();setColSearch({...colSearch,product_name:e.target.value})}}/></th><th></th><th></th><th></th><th><input className="input" style={{width:"100%",padding:"3px 6px",fontSize:11}} placeholder="搜尋..." value={colSearch.status_desc} onClick={e=>e.stopPropagation()} onFocus={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();setColSearch({...colSearch,status_desc:e.target.value})}}/></th><th></th></tr></thead>
       <tbody>{paged.map((r,i)=>{
         const isResolved=!!r.resolved_at;const isHidden=!!r.hidden;const needsAction=r.status!=="matched";
         const isConfEntry=!!r.is_confirmed_entry;
