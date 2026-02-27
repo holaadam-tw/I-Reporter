@@ -734,7 +734,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const today=new Date().toISOString().slice(0,10);const d10=new Date(Date.now()-10*86400000).toISOString().slice(0,10);const d5=new Date(Date.now()+5*86400000).toISOString().slice(0,10);
   const[dateFrom,setDateFrom]=useState(d10);const[dateTo,setDateTo]=useState(d5);
   const[filter,setFilter]=useState("all");const[sortCol,setSortCol]=useState("status");const[sortDir,setSortDir]=useState("asc");
-  const[colSearch,setColSearch]=useState({product_code:"",product_name:"",status_desc:""});
+  const[colSearch,setColSearch]=useState({keyword:"",status_desc:""});
   const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[],cnv:[]});
   const[showHidden,setShowHidden]=useState(false);const[showMatched,setShowMatched]=useState(false);
   const[supplementing,setSupplementing]=useState(null);
@@ -908,8 +908,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
   const setFilterAndReset=(f)=>{setFilter(f);setPage(1);};
   const statusFilter=r=>{if(filter==="all")return true;if(filter==="matched")return r.status==="matched";if(filter==="mismatch")return r.status==="qty_mismatch";if(filter==="missing")return r.status==="missing_pkg"||r.status==="missing_asm";if(filter==="wip")return r.status==="wip_normal";if(filter==="over")return r.status==="over_packaged";return true;};
-  const colFilter=r=>{for(const[k,v] of Object.entries(colSearch)){if(!v)continue;const val=String(r[k]||"").toLowerCase();if(!val.includes(v.toLowerCase()))return false;}return true;};
-  if(colSearch.product_code||colSearch.product_name||colSearch.status_desc)console.log('colSearch:',colSearch,'data[0] keys:',data[0]?Object.keys(data[0]):[],'filtered count:',data.filter(statusFilter).filter(colFilter).length);
+  const colFilter=r=>{if(colSearch.keyword){const q=colSearch.keyword.toLowerCase();if(!String(r.product_code||"").toLowerCase().includes(q)&&!String(r.product_name||"").toLowerCase().includes(q))return false;}if(colSearch.status_desc){if(!String(r.status_desc||"").toLowerCase().includes(colSearch.status_desc.toLowerCase()))return false;}return true;};
   const hiddenFilter=r=>{if(showHidden)return true;return !r.hidden;};
   const matchedFilter=r=>{if(showMatched)return true;if(filter==="all"||filter==="matched")return true;return r.status!=="matched";};
 
@@ -960,10 +959,9 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     <div className="stat-grid">{stats.map(s=>(<div key={s.key} className={`card stat-card ${filter===s.key?"active":""}`} style={filter===s.key?{borderColor:iconBg[s.t],borderWidth:2}:{}} onClick={()=>setFilterAndReset(filter===s.key?"all":s.key)}><div className="stat-icon" style={{background:iconBg[s.t]}}>{s.i}</div><div><div className="stat-value">{s.v}</div><div className="stat-label">{s.l}{filter===s.key?" ✓":""}</div>{s.sub&&<div style={{fontSize:10,color:"var(--success)",marginTop:1}}>{s.sub}</div>}</div></div>))}</div>
     <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center",flexWrap:"wrap"}}>
       <span style={{fontSize:12,color:"var(--muted)",whiteSpace:"nowrap"}}>篩選：</span>
-      <input className="input" style={{padding:"4px 8px",fontSize:12,width:160}} placeholder="產品編號搜尋..." value={colSearch.product_code} onChange={e=>setColSearch({...colSearch,product_code:e.target.value})}/>
-      <input className="input" style={{padding:"4px 8px",fontSize:12,width:160}} placeholder="產品名稱搜尋..." value={colSearch.product_name} onChange={e=>setColSearch({...colSearch,product_name:e.target.value})}/>
+      <input className="input" style={{padding:"4px 8px",fontSize:12,width:220}} placeholder="搜尋產品編號或名稱..." value={colSearch.keyword} onChange={e=>setColSearch({...colSearch,keyword:e.target.value})}/>
       <input className="input" style={{padding:"4px 8px",fontSize:12,width:140}} placeholder="狀態搜尋..." value={colSearch.status_desc} onChange={e=>setColSearch({...colSearch,status_desc:e.target.value})}/>
-      {(colSearch.product_code||colSearch.product_name||colSearch.status_desc)&&<button className="btn btn-sm btn-secondary" style={{padding:"3px 8px",fontSize:11}} onClick={()=>setColSearch({product_code:"",product_name:"",status_desc:""})}>清除</button>}
+      {(colSearch.keyword||colSearch.status_desc)&&<button className="btn btn-sm btn-secondary" style={{padding:"3px 8px",fontSize:11}} onClick={()=>setColSearch({keyword:"",status_desc:""})}>清除</button>}
     </div>
     {loading?<div className="spinner"/>:filtered.length===0?<div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>無符合資料</div>:
     <div className="table-wrap"><table>
