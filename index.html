@@ -842,8 +842,8 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
         setExpandData({asm:(detail.asm||[]).filter(a=>ids.has(a.id)),pkg:(detail.pkg||[]).filter(p=>ids.has(p.id)),cnv:detail.cnv||[]});
       }else{
         setExpandData(detail);
-        // 非 matched 行才載入 confirmedIds（用於勾選確認）
-        if(row.status!=="matched"&&!row.is_confirmed_entry){await loadConfirmedIds(row.product_id);}
+        // 載入 confirmedIds（用於勾選確認 + 🔒 顯示）
+        if(!row.is_confirmed_entry){await loadConfirmedIds(row.product_id);}
       }
     }catch(e){console.error(e);setExpandData({asm:[],pkg:[],cnv:[]});}
   };
@@ -890,13 +890,25 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   // 確認鎖定（toggle）— 逐單配對，plain INSERT + confirmed_item_ids
   const confirmReconciliation=async(row)=>{
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
-    // 收集展開區所有未確認的 item IDs
+    // 如果展開區沒有資料，先載入明細
+    let detail=expandData;
+    let cIds=confirmedIds;
+    if(!detail.asm||detail.asm.length===0){
+      detail=await loadDetailItems(row.product_code,dateFrom,dateTo,row.product_id);
+      // 載入已確認 IDs
+      try{
+        const confRows=await supaFetch("reconciliation_confirmed",{query:`select=id,confirmed_item_ids&product_id=eq.${row.product_id}`});
+        cIds=new Set();
+        (confRows||[]).forEach(r=>{(r.confirmed_item_ids||[]).forEach(id=>cIds.add(id));});
+      }catch(e){cIds=new Set();}
+    }
+    // 收集所有未確認的 item IDs
     const allIds=[];
-    (expandData.asm||[]).forEach(a=>{if(!confirmedIds.has(a.id))allIds.push(a.id);});
-    (expandData.pkg||[]).forEach(p=>{if(!confirmedIds.has(p.id))allIds.push(p.id);});
+    (detail.asm||[]).forEach(a=>{if(!cIds.has(a.id))allIds.push(a.id);});
+    (detail.pkg||[]).forEach(p=>{if(!cIds.has(p.id))allIds.push(p.id);});
     if(allIds.length===0){toast("沒有可確認的單據","warning");return;}
-    const asmItems=(expandData.asm||[]).filter(a=>!confirmedIds.has(a.id));
-    const pkgItems=(expandData.pkg||[]).filter(p=>!confirmedIds.has(p.id));
+    const asmItems=(detail.asm||[]).filter(a=>!cIds.has(a.id));
+    const pkgItems=(detail.pkg||[]).filter(p=>!cIds.has(p.id));
     const asmQty=asmItems.reduce((s,a)=>s+(a.qty||0),0);
     const pkgQty=pkgItems.reduce((s,p)=>s+(p.qty||0),0);
     try{
@@ -951,7 +963,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const errors=allVisible.filter(d=>d.status==="missing_pkg"||d.status==="missing_asm").length;
   const warnings=allVisible.filter(d=>d.status==="qty_mismatch").length;
   const matched=allVisible.filter(d=>d.status==="matched").length;
-  const confirmedCount=allVisible.filter(d=>d.status==="matched"&&d.confirmed_at).length;
+  const confirmedCount=allVisible.filter(d=>d.status==="matched"&&d.confirmed_at&&(d.assembly_qty||0)===0&&(d.packaging_qty||0)===0).length;
   const wip=allVisible.filter(d=>d.status==="wip_normal").length;
   const overPkg=allVisible.filter(d=>d.status==="over_packaged").length;
   const hiddenCount=data.filter(d=>d.hidden).length;
@@ -996,7 +1008,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       <tbody>{paged.map((r,i)=>{
         const isResolved=!!r.resolved_at;const isHidden=!!r.hidden;const needsAction=r.status!=="matched";
         const isConfEntry=!!r.is_confirmed_entry;
-        const isConfirmed=!!r.confirmed_at;const isMatched=r.status==="matched";
+        const hasAnyConfirm=!!r.confirmed_at;const isFullyConfirmed=hasAnyConfirm&&(r.assembly_qty||0)===0&&(r.packaging_qty||0)===0;const isConfirmed=isFullyConfirmed;const hasPartialConfirm=hasAnyConfirm&&!isFullyConfirmed;const isMatched=r.status==="matched";
         const cls=(isConfEntry?"row-confirmed-entry":r.status==="missing_pkg"||r.status==="missing_asm"?"row-error":r.status==="qty_mismatch"||r.status==="over_packaged"?"row-warning":"")+(isHidden?" row-hidden":isConfirmed&&isMatched&&!isConfEntry?" row-confirmed":isResolved?" row-resolved":"")+" clickable";
         const rowKey=isConfEntry?(r.product_code+"_conf_"+r.confirmed_record_id):(r.product_code+"_"+(r.order_date||"all"));
         const isExpanded=expandedRow===rowKey;
@@ -1009,17 +1021,17 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.assembly_qty}{!isConfEntry&&r.confirmed_asm_qty>0&&<span style={{fontSize:10,color:"var(--success)",marginLeft:3}} title={`已確認 ${r.confirmed_asm_qty}`}>(+{r.confirmed_asm_qty})</span>}</td>
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.packaging_qty}{!isConfEntry&&r.confirmed_pkg_qty>0&&<span style={{fontSize:10,color:"var(--success)",marginLeft:3}} title={`已確認 ${r.confirmed_pkg_qty}`}>(+{r.confirmed_pkg_qty})</span>}</td>
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.2em",fontWeight:800,textAlign:"right",color:r.diff>0?"var(--danger)":r.diff<0?"var(--warning)":"var(--success)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
-            <td>{isConfEntry?<><Badge type="success">核對一致</Badge><span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span></>:<><Badge type={statusMap[r.status]}>{r.status_desc}</Badge>{isConfirmed&&isMatched&&<span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span>}{isResolved&&!isHidden&&needsAction&&<span className="resolve-tag" style={{marginLeft:4}}>已處理</span>}{isHidden&&<span className="resolve-tag hide-tag" style={{marginLeft:4}}>已隱藏</span>}</>}</td>
-            <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isConfEntry?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className="toggle-switch on" role="button" tabIndex={0} title="點擊取消確認" onClick={e=>{e.stopPropagation();e.preventDefault();unconfirmReconciliation(r);}}></div><span style={{fontSize:10,color:"var(--success)"}}>已確認</span></div>:isMatched?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className={`toggle-switch ${isConfirmed?"on":"off"}`} role="button" tabIndex={0} title={isConfirmed?"點擊取消確認":"點擊確認鎖定"} onClick={e=>{e.stopPropagation();e.preventDefault();if(isConfirmed){unconfirmReconciliation(r);}else{confirmReconciliation(r);}}}></div><span style={{fontSize:10,color:isConfirmed?"var(--success)":"var(--muted)"}}>{isConfirmed?"已確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
+            <td>{isConfEntry?<><Badge type="success">核對一致</Badge><span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span></>:<><Badge type={statusMap[r.status]}>{r.status_desc}</Badge>{isConfirmed&&isMatched&&<span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span>}{hasPartialConfirm&&isMatched&&<span className="resolve-tag" style={{marginLeft:4,background:"#fff3e0",color:"#e65100",border:"1px solid #ffcc80"}}>部分確認</span>}{isResolved&&!isHidden&&needsAction&&<span className="resolve-tag" style={{marginLeft:4}}>已處理</span>}{isHidden&&<span className="resolve-tag hide-tag" style={{marginLeft:4}}>已隱藏</span>}</>}</td>
+            <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isConfEntry?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className="toggle-switch on" role="button" tabIndex={0} title="點擊取消確認" onClick={e=>{e.stopPropagation();e.preventDefault();unconfirmReconciliation(r);}}></div><span style={{fontSize:10,color:"var(--success)"}}>已確認</span></div>:isMatched?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className={`toggle-switch ${isConfirmed?"on":"off"}`} style={hasPartialConfirm?{background:"#ff9800"}:{}} role="button" tabIndex={0} title={isConfirmed?"點擊取消確認":hasPartialConfirm?"點擊確認剩餘單據":"點擊確認鎖定"} onClick={e=>{e.stopPropagation();e.preventDefault();if(isConfirmed){unconfirmReconciliation(r);}else{confirmReconciliation(r);}}}></div><span style={{fontSize:10,color:isConfirmed?"var(--success)":hasPartialConfirm?"#e65100":"var(--muted)"}}>{isConfirmed?"已確認":hasPartialConfirm?"部分確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
           {isExpanded&&<tr className="expand-row"><td colSpan={9}>
             <ExpandDetailSection expandData={expandData}
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
               onEditClick={isConfEntry?null:(tableName,item)=>{const isAsm=tableName==="assembly_items";setEditModal({show:true,tableName,type:isAsm?"assembly":"packaging",item:isAsm?{id:item.id,product_id:item.product_id,qty:item.qty,assembler:item.assembler||"",warehouse_date:item.warehouse_date||"",note:item.note||""}:{id:item.id,product_id:item.product_id,qty:item.qty,customer_id:item.customer_id||"",is_stock:item.is_stock,tester:item.tester||"",assembler:item.assembler||"",assembly_date:item.assembly_date||"",note:item.note||""}});}}
               onDeleteClick={isConfEntry?null:handleDeleteItem}
-              {...(needsAction&&!isConfEntry?{checkedIds,confirmedIds,onCheck:handleCheck,onUnlockItem:handleUnlockItem}:{})}/>
+              {...(!isConfEntry?{checkedIds,confirmedIds,onCheck:handleCheck,onUnlockItem:handleUnlockItem}:{})}/>
             {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
-            {needsAction&&!isConfEntry&&checkedIds.size>0&&<div style={{display:"flex",gap:8,padding:"4px 16px 12px",alignItems:"center"}}><button className="btn btn-sm btn-primary" style={{background:"var(--success)"}} onClick={()=>handleConfirmBatch(r)}>確認已勾選 ({checkedIds.size} 筆)</button><button className="btn btn-sm btn-secondary" onClick={()=>setCheckedIds(new Set())}>清除勾選</button></div>}
+            {!isConfEntry&&checkedIds.size>0&&<div style={{display:"flex",gap:8,padding:"4px 16px 12px",alignItems:"center"}}><button className="btn btn-sm btn-primary" style={{background:"var(--success)"}} onClick={()=>handleConfirmBatch(r)}>確認已勾選 ({checkedIds.size} 筆)</button><button className="btn btn-sm btn-secondary" onClick={()=>setCheckedIds(new Set())}>清除勾選</button></div>}
             {needsAction&&!isConfEntry&&!supplementing&&<div style={{display:"flex",gap:8,padding:"0 16px 12px"}}>
               <button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button>
               <button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button>
