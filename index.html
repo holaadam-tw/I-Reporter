@@ -596,6 +596,7 @@ async function loadDetailItems(productCode,dateFrom,dateTo,productId){
   }
   const results=await Promise.all(fetches);
   const asmItems=results[0],pkgItems=results[1];
+  console.log('[loadDetailItems] dateFrom:', dateFrom, 'dateTo:', dateTo, 'asm:', (asmItems||[]).length, 'pkg:', (pkgItems||[]).length);
   let cnv=[];
   if(productId){
     const seen=new Set();
@@ -747,7 +748,6 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[staffModal,setStaffModal]=useState({show:false,role:"general"});
   const[editModal,setEditModal]=useState({show:false,item:null,tableName:"",type:""});
   const[checkedIds,setCheckedIds]=useState(new Set());
-  const[_dbgInfo,_setDbgInfo]=useState(null);
   const[confirmedIds,setConfirmedIds]=useState(new Set());
   const[itemToRecordMap,setItemToRecordMap]=useState({});
   const[page,setPage]=useState(1);const[pageSize,setPageSize]=useState(50);
@@ -819,7 +819,6 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const loadConfirmedIds=async(productId)=>{
     try{
       const rows=await supaFetch("reconciliation_confirmed",{query:`select=id,confirmed_item_ids&product_id=eq.${productId}`});
-      _setDbgInfo({productId,rowCount:rows?rows.length:0,raw:JSON.stringify((rows||[]).map(r=>({id:r.id,items:r.confirmed_item_ids})))});
       const ids=new Set();
       const map={};
       (rows||[]).forEach(r=>{
@@ -828,6 +827,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
           map[itemId]=r.id;
         });
       });
+      console.log('[loadConfirmedIds] productId:', productId, 'confirmedIds:', ids.size);
       setConfirmedIds(ids);
       setItemToRecordMap(map);
     }catch(e){console.error("loadConfirmedIds error:",e);setConfirmedIds(new Set());setItemToRecordMap({});}
@@ -838,7 +838,8 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     if(expandedRow===rowKey){setExpandedRow(null);return;}
     setExpandedRow(rowKey);setSupplementing(null);setCheckedIds(new Set());
     try{
-      const detail=await loadDetailItems(row.product_code,dateFrom,dateTo,row.product_id);
+      // 不帶日期過濾 → 查出該產品的所有 items（含已確認的舊單據）
+      const detail=await loadDetailItems(row.product_code,null,null,row.product_id);
       // 確認行：只顯示被確認的那些單據
       if(row.is_confirmed_entry&&row.confirmed_item_ids&&row.confirmed_item_ids.length>0){
         const ids=new Set(row.confirmed_item_ids);
@@ -897,7 +898,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     let detail=expandData;
     let cIds=confirmedIds;
     if(!detail.asm||detail.asm.length===0){
-      detail=await loadDetailItems(row.product_code,dateFrom,dateTo,row.product_id);
+      detail=await loadDetailItems(row.product_code,null,null,row.product_id);
       // 載入已確認 IDs
       try{
         const confRows=await supaFetch("reconciliation_confirmed",{query:`select=id,confirmed_item_ids&product_id=eq.${row.product_id}`});
@@ -1028,7 +1029,6 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isConfEntry?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className="toggle-switch on" role="button" tabIndex={0} title="點擊取消確認" onClick={e=>{e.stopPropagation();e.preventDefault();unconfirmReconciliation(r);}}></div><span style={{fontSize:10,color:"var(--success)"}}>已確認</span></div>:isMatched?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className={`toggle-switch ${isConfirmed?"on":"off"}`} style={hasPartialConfirm?{background:"#ff9800"}:{}} role="button" tabIndex={0} title={isConfirmed?"點擊取消確認":hasPartialConfirm?"點擊確認剩餘單據":"點擊確認鎖定"} onClick={e=>{e.stopPropagation();e.preventDefault();if(isConfirmed){unconfirmReconciliation(r);}else{confirmReconciliation(r);}}}></div><span style={{fontSize:10,color:isConfirmed?"var(--success)":hasPartialConfirm?"#e65100":"var(--muted)"}}>{isConfirmed?"已確認":hasPartialConfirm?"部分確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
           {isExpanded&&<tr className="expand-row"><td colSpan={9}>
-            {_dbgInfo&&<div style={{background:"#fff3cd",padding:"6px 12px",fontSize:11,borderRadius:4,margin:"0 0 8px",wordBreak:"break-all"}}>🔍 DEBUG loadConfirmedIds: queryProductId={_dbgInfo.productId}, rowCount={_dbgInfo.rowCount}, confirmedIds.size={confirmedIds.size}, raw={_dbgInfo.raw}</div>}
             <ExpandDetailSection expandData={expandData}
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
               onEditClick={isConfEntry?null:(tableName,item)=>{const isAsm=tableName==="assembly_items";setEditModal({show:true,tableName,type:isAsm?"assembly":"packaging",item:isAsm?{id:item.id,product_id:item.product_id,qty:item.qty,assembler:item.assembler||"",warehouse_date:item.warehouse_date||"",note:item.note||""}:{id:item.id,product_id:item.product_id,qty:item.qty,customer_id:item.customer_id||"",is_stock:item.is_stock,tester:item.tester||"",assembler:item.assembler||"",assembly_date:item.assembly_date||"",note:item.note||""}});}}
