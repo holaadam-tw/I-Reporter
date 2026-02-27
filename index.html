@@ -400,7 +400,46 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[checkedIds,setCheckedIds]=useState(new Set());
   const[confirmedIds,setConfirmedIds]=useState(new Set());
 
-  const load=useCallback(async()=>{setLoading(true);try{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);try{const rpcData=await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt});setData(rpcData||[]);}catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
+  // 前端扣除已確認數量 + 重算狀態
+  const adjustWithConfirmed=(rows,confRows)=>{
+    const cm={};
+    (confRows||[]).forEach(c=>{
+      const pid=c.product_id;
+      if(!cm[pid])cm[pid]={asm:0,pkg:0,at:null};
+      cm[pid].asm+=(c.assembly_qty||0);
+      cm[pid].pkg+=(c.packaging_qty||0);
+      if(!cm[pid].at||c.confirmed_at>cm[pid].at)cm[pid].at=c.confirmed_at;
+    });
+    return rows.map(r=>{
+      const cf=cm[r.product_id];
+      if(!cf)return r;
+      // 還原原始值（加回 SQL 可能已扣的量），再用前端查到的確認量重扣
+      const rawAsm=(r.assembly_qty||0)+(r.confirmed_asm_qty||0);
+      const rawPkg=(r.packaging_qty||0)+(r.confirmed_pkg_qty||0);
+      const adjAsm=Math.max(rawAsm-cf.asm,0);
+      const adjPkg=Math.max(rawPkg-cf.pkg,0);
+      const adjDiff=adjAsm-adjPkg;
+      let status,status_desc;
+      if(adjAsm===0&&adjPkg===0){status="fully_confirmed";status_desc="完全確認";}
+      else if(adjAsm===adjPkg){status="matched";status_desc="核對一致";}
+      else if(adjAsm===0){status="missing_asm";status_desc="有包裝無組裝";}
+      else if(adjPkg===0){status="missing_pkg";status_desc="有組裝無包裝";}
+      else if(adjAsm>adjPkg&&adjPkg>0){status="wip_normal";status_desc="在製品(正常)";}
+      else if(adjPkg>adjAsm){status="over_packaged";status_desc="包裝超出組裝";}
+      else{status="qty_mismatch";status_desc="數量差異";}
+      return{...r,assembly_qty:adjAsm,packaging_qty:adjPkg,diff:adjDiff,
+        confirmed_asm_qty:cf.asm,confirmed_pkg_qty:cf.pkg,confirmed_at:cf.at,confirmed_by:"系統使用者",
+        status,status_desc};
+    }).filter(r=>r.status!=="fully_confirmed");
+  };
+
+  const load=useCallback(async()=>{setLoading(true);try{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);try{
+    const[rpcData,confData]=await Promise.all([
+      supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt}),
+      supaFetch("reconciliation_confirmed",{query:`select=product_id,assembly_qty,packaging_qty,confirmed_at&date_from=lte.${dt}&date_to=gte.${df}`})
+    ]);
+    setData(adjustWithConfirmed(rpcData||[],confData||[]));
+  }catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
 
   const searchByDate=async()=>{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);setLoading(true);try{setData(await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt})||[]);}catch(e){console.error(e);load();}setLoading(false);};
@@ -462,18 +501,17 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const markHidden=async(productId)=>{updateLocal(productId,{hidden:true});try{await supaPatch("reconciliation_resolved",`product_id=eq.${productId}`,{hidden:true});}catch(e){toast("標記失敗: "+e.message,"error");updateLocal(productId,{hidden:false});}};
   const unmarkHidden=async(productId)=>{updateLocal(productId,{hidden:false});try{await supaPatch("reconciliation_resolved",`product_id=eq.${productId}`,{hidden:false});}catch(e){toast("取消失敗: "+e.message,"error");updateLocal(productId,{hidden:true});}};
 
-  // 確認鎖定（toggle）— upsert 防重複 + 即時更新 UI
+  // 確認鎖定（toggle）— upsert 防重複 + 樂觀更新 + 完整刷新
   const confirmReconciliation=async(row)=>{
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
     // 先即時更新 UI（樂觀更新）
     updateLocal(row.product_id,{confirmed_at:new Date().toISOString(),confirmed_by:"系統使用者"});
     try{
       const body={product_id:row.product_id,date_from:df,date_to:dt,assembly_qty:Number(row.assembly_qty),packaging_qty:Number(row.packaging_qty),confirmed_by:"系統使用者"};
-      // upsert: 若 UNIQUE(product_id, date_from, date_to) 已存在則更新，否則新增
       await supaFetch("reconciliation_confirmed",{method:"POST",body,headers:{Prefer:"return=representation,resolution=merge-duplicates"}});
       toast(`${row.product_code} 已確認鎖定`,"success");
+      load(); // 完整刷新以重算 adjusted 值
     }catch(e){
-      // 回滾 UI
       updateLocal(row.product_id,{confirmed_at:null,confirmed_by:null});
       toast("確認失敗: "+e.message,"error");
     }
@@ -481,14 +519,13 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const unconfirmReconciliation=async(row)=>{
     if(!confirm(`確定要取消「${row.product_code}」的確認鎖定嗎？`))return;
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
-    // 先即時更新 UI（樂觀更新）
     const prev={confirmed_at:row.confirmed_at,confirmed_by:row.confirmed_by};
     updateLocal(row.product_id,{confirmed_at:null,confirmed_by:null});
     try{
       await supaDelete("reconciliation_confirmed",`product_id=eq.${row.product_id}&date_from=eq.${df}&date_to=eq.${dt}`);
       toast(`已取消 ${row.product_code} 的確認鎖定`,"success");
+      load(); // 完整刷新以重算 adjusted 值
     }catch(e){
-      // 回滾 UI
       updateLocal(row.product_id,prev);
       toast("取消確認失敗: "+e.message,"error");
     }
