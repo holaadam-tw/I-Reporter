@@ -447,9 +447,12 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       await supaFetch("reconciliation_confirmed",{method:"POST",body:{product_id:productId,date_from:df,date_to:dt,assembly_qty:asmQty,packaging_qty:pkgQty,confirmed_item_ids:itemIds,confirmed_by:"系統使用者"}});
       toast(`已確認 ${asmChecked.length+pkgChecked.length} 筆（組裝 ${asmQty} + 包裝 ${pkgQty}）`,"success");
       setCheckedIds(new Set());
-      const[pc]=expandedRow.split("_");
-      await loadConfirmedIds(pc);
-      load();
+      // 關閉展開行，刷新核對數據，再重新展開以反映新狀態
+      const pc=expandedRow?expandedRow.split("_")[0]:null;
+      setExpandedRow(null);
+      await load();
+      // 自動重新展開同一產品（用 setTimeout 等 state 更新完）
+      if(pc){setTimeout(()=>{loadDetail(null,pc,null);},200);}
     }catch(e){toast("確認失敗: "+e.message,"error");}
   };
 
@@ -461,12 +464,15 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
   // 確認鎖定（toggle）
   const confirmReconciliation=async(row)=>{
+    console.log("confirmReconciliation called",row.product_code,row.product_id);
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
     try{
-      await supaFetch("reconciliation_confirmed",{method:"POST",body:{product_id:row.product_id,date_from:df,date_to:dt,assembly_qty:Number(row.assembly_qty),packaging_qty:Number(row.packaging_qty),confirmed_by:"系統使用者"}});
+      const body={product_id:row.product_id,date_from:df,date_to:dt,assembly_qty:Number(row.assembly_qty),packaging_qty:Number(row.packaging_qty),confirmed_by:"系統使用者"};
+      console.log("POST reconciliation_confirmed",body);
+      await supaFetch("reconciliation_confirmed",{method:"POST",body});
       toast(`${row.product_code} 已確認鎖定`,"success");
       load();
-    }catch(e){toast("確認失敗: "+e.message,"error");}
+    }catch(e){console.error("confirmReconciliation error:",e);toast("確認失敗: "+e.message,"error");}
   };
   const unconfirmReconciliation=async(row)=>{
     if(!confirm(`確定要取消「${row.product_code}」的確認鎖定嗎？`))return;
@@ -548,7 +554,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.packaging_qty}{r.confirmed_pkg_qty>0&&<span style={{fontSize:10,color:"var(--success)",marginLeft:3}} title={`已確認 ${r.confirmed_pkg_qty}`}>(+{r.confirmed_pkg_qty})</span>}</td>
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.2em",fontWeight:800,textAlign:"right",color:r.diff>0?"var(--danger)":r.diff<0?"var(--warning)":"var(--success)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
             <td><Badge type={statusMap[r.status]}>{r.status_desc}</Badge>{isConfirmed&&isMatched&&<span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span>}{isResolved&&!isHidden&&needsAction&&<span className="resolve-tag" style={{marginLeft:4}}>已處理</span>}{isHidden&&<span className="resolve-tag hide-tag" style={{marginLeft:4}}>已隱藏</span>}</td>
-            <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isMatched?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><button className={`toggle-switch ${isConfirmed?"on":"off"}`} title={isConfirmed?"點擊取消確認":"點擊確認鎖定"} onClick={()=>isConfirmed?unconfirmReconciliation(r):confirmReconciliation(r)}/><span style={{fontSize:10,color:isConfirmed?"var(--success)":"var(--muted)"}}>{isConfirmed?"已確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
+            <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isMatched?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className={`toggle-switch ${isConfirmed?"on":"off"}`} role="button" tabIndex={0} title={isConfirmed?"點擊取消確認":"點擊確認鎖定"} onClick={e=>{e.stopPropagation();e.preventDefault();console.log("toggle clicked",r.product_code,isConfirmed);if(isConfirmed){unconfirmReconciliation(r);}else{confirmReconciliation(r);}}}></div><span style={{fontSize:10,color:isConfirmed?"var(--success)":"var(--muted)"}}>{isConfirmed?"已確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
           {isExpanded&&<tr className="expand-row"><td colSpan={9}>
             <ExpandDetailSection expandData={expandData}
