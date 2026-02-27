@@ -751,7 +751,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[page,setPage]=useState(1);const[pageSize,setPageSize]=useState(50);
 
   // 前端扣除已確認數量 + 產生確認行
-  const adjustWithConfirmed=(rows,confRows)=>{
+  const adjustWithConfirmed=(rows,confRows,itemDates)=>{
     // 1. 彙總每個產品的確認量
     const cm={};
     (confRows||[]).forEach(c=>{
@@ -788,9 +788,13 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     // 3. 產生確認行（每筆 reconciliation_confirmed 記錄 → 一行核對一致）
     const confirmedEntries=(confRows||[]).filter(c=>(c.assembly_qty||0)>0||(c.packaging_qty||0)>0).map(c=>{
       const src=rows.find(r=>r.product_id===c.product_id)||{};
+      // 從 itemDates 算出此確認批次的實際日期
+      let cAsmDate=null,cPkgDate=null;
+      (c.confirmed_item_ids||[]).forEach(id=>{const d=itemDates&&itemDates[id];if(!d)return;if(d.type==="asm"&&d.date&&(!cAsmDate||d.date<cAsmDate))cAsmDate=d.date;if(d.type==="pkg"&&d.date&&(!cPkgDate||d.date<cPkgDate))cPkgDate=d.date;});
       return{
         product_id:c.product_id,product_code:src.product_code||"?",product_name:src.product_name||"?",
-        order_date:src.order_date,first_asm_date:src.first_asm_date,first_pkg_date:src.first_pkg_date,
+        order_date:cAsmDate||cPkgDate||src.order_date,
+        first_asm_date:cAsmDate||null,first_pkg_date:cPkgDate||null,
         assembly_qty:c.assembly_qty||0,packaging_qty:c.packaging_qty||0,diff:0,
         status:"matched",status_desc:"核對一致",
         is_confirmed_entry:true,confirmed_record_id:c.id,
@@ -809,7 +813,19 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt}),
       supaFetch("reconciliation_confirmed",{query:`select=id,product_id,assembly_qty,packaging_qty,confirmed_at,confirmed_by,confirmed_item_ids,date_from,date_to&date_from=lte.${dt}&date_to=gte.${df}`})
     ]);
-    setData(adjustWithConfirmed(rpcData||[],confData||[]));
+    // 批次查詢所有 confirmed item 的實際日期
+    const allConfIds=[];(confData||[]).forEach(c=>(c.confirmed_item_ids||[]).forEach(id=>allConfIds.push(id)));
+    let itemDates={};
+    if(allConfIds.length>0){
+      const inList=allConfIds.map(id=>encodeURIComponent(id)).join(',');
+      const[ad,pd]=await Promise.all([
+        supaFetch("assembly_items",{query:`select=id,assembly_orders!inner(order_date)&id=in.(${inList})`}),
+        supaFetch("packaging_items",{query:`select=id,packaging_orders!inner(order_date)&id=in.(${inList})`})
+      ]);
+      (ad||[]).forEach(a=>{itemDates[a.id]={type:"asm",date:a.assembly_orders?.order_date};});
+      (pd||[]).forEach(p=>{itemDates[p.id]={type:"pkg",date:p.packaging_orders?.order_date};});
+    }
+    setData(adjustWithConfirmed(rpcData||[],confData||[],itemDates));
   }catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
 
@@ -986,7 +1002,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const matchedFilter=r=>{if(showMatched)return true;if(filter==="all"||filter==="matched"||filter==="confirmed"||filter==="unconfirmed")return true;return r.status!=="matched";};
 
   const statusOrder={missing_pkg:0,missing_asm:1,over_packaged:2,qty_mismatch:3,wip_normal:4,matched:5};
-  const sortFn=(a,b)=>{let va,vb;if(sortCol==="status"){va=statusOrder[a.status]??6;vb=statusOrder[b.status]??6;}else if(["assembly_qty","packaging_qty","diff"].includes(sortCol)){va=Number(a[sortCol])||0;vb=Number(b[sortCol])||0;}else if(sortCol==="order_date"){va=a.order_date||"9999";vb=b.order_date||"9999";}else{va=String(a[sortCol]||"").toLowerCase();vb=String(b[sortCol]||"").toLowerCase();}if(va<vb)return sortDir==="asc"?-1:1;if(va>vb)return sortDir==="asc"?1:-1;return 0;};
+  const sortFn=(a,b)=>{let va,vb;if(sortCol==="status"){va=statusOrder[a.status]??6;vb=statusOrder[b.status]??6;}else if(["assembly_qty","packaging_qty","diff"].includes(sortCol)){va=Number(a[sortCol])||0;vb=Number(b[sortCol])||0;}else if(sortCol==="first_asm_date"||sortCol==="first_pkg_date"){va=a[sortCol]||"9999";vb=b[sortCol]||"9999";}else{va=String(a[sortCol]||"").toLowerCase();vb=String(b[sortCol]||"").toLowerCase();}if(va<vb)return sortDir==="asc"?-1:1;if(va>vb)return sortDir==="asc"?1:-1;return 0;};
   const toggleSort=col=>{if(sortCol===col)setSortDir(d=>d==="asc"?"desc":"asc");else{setSortCol(col);setSortDir("asc");}};
 
   const filtered=data.filter(statusFilter).filter(colFilter).filter(hiddenFilter).filter(matchedFilter).sort(sortFn);
@@ -1038,7 +1054,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     </div>
     {loading?<div className="spinner"/>:filtered.length===0?<div style={{textAlign:"center",padding:40,color:"var(--muted)"}}>無符合資料</div>:
     <div className="table-wrap"><table>
-      <thead><tr><th style={{width:30}}></th><SortTh col="order_date">日期</SortTh><SortTh col="product_code">產品編號</SortTh><SortTh col="product_name">產品名稱</SortTh><SortTh col="assembly_qty" style={{textAlign:"right"}}>組裝數</SortTh><SortTh col="packaging_qty" style={{textAlign:"right"}}>包裝數</SortTh><SortTh col="diff" style={{textAlign:"right"}}>差異</SortTh><SortTh col="status">狀態</SortTh><th style={{width:130}}>處理</th></tr></thead>
+      <thead><tr><th style={{width:30}}></th><SortTh col="first_asm_date">組裝日期</SortTh><SortTh col="first_pkg_date">包裝日期</SortTh><SortTh col="product_code">產品編號</SortTh><SortTh col="product_name">產品名稱</SortTh><SortTh col="assembly_qty" style={{textAlign:"right"}}>組裝數</SortTh><SortTh col="packaging_qty" style={{textAlign:"right"}}>包裝數</SortTh><SortTh col="diff" style={{textAlign:"right"}}>差異</SortTh><SortTh col="status">狀態</SortTh><th style={{width:130}}>處理</th></tr></thead>
       <tbody>{paged.map((r,i)=>{
         const isResolved=!!r.resolved_at;const isHidden=!!r.hidden;const needsAction=r.status!=="matched";
         const isConfEntry=!!r.is_confirmed_entry;
@@ -1049,7 +1065,8 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
         return <React.Fragment key={rowKey+"_"+i}>
           <tr className={cls} onClick={()=>loadDetail(r)}>
             <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExpanded?"▼":"▶"}</td>
-            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{hasPartialConfirm&&r.confirmed_date_from?<div style={{lineHeight:1.3}}><div style={{color:"var(--text)"}}>{r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</div><div style={{fontSize:10,color:"var(--success)"}}>🔒 {r.confirmed_date_from===r.confirmed_date_to?r.confirmed_date_from.slice(5):r.confirmed_date_from.slice(5)+"~"+r.confirmed_date_to.slice(5)}</div></div>:r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.first_asm_date||"-"}</td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.first_pkg_date||"-"}</td>
             <td><code style={{fontWeight:600}}>{r.product_code}</code></td>
             <td>{r.product_name}</td>
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.assembly_qty}{!isConfEntry&&r.confirmed_asm_qty>0&&<span style={{fontSize:10,color:"var(--success)",marginLeft:3}} title={`已確認 ${r.confirmed_asm_qty}`}>(+{r.confirmed_asm_qty})</span>}</td>
@@ -1058,7 +1075,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td>{isConfEntry?<><Badge type="success">核對一致</Badge><span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span></>:<><Badge type={statusMap[r.status]}>{r.status_desc}</Badge>{isConfirmed&&isMatched&&<span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span>}{hasPartialConfirm&&isMatched&&<span className="resolve-tag" style={{marginLeft:4,background:"#fff3e0",color:"#e65100",border:"1px solid #ffcc80"}}>部分確認</span>}{isResolved&&!isHidden&&needsAction&&<span className="resolve-tag" style={{marginLeft:4}}>已處理</span>}{isHidden&&<span className="resolve-tag hide-tag" style={{marginLeft:4}}>已隱藏</span>}</>}</td>
             <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isConfEntry?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className="toggle-switch on" role="button" tabIndex={0} title="點擊取消確認" onClick={e=>{e.stopPropagation();e.preventDefault();unconfirmReconciliation(r);}}></div><span style={{fontSize:10,color:"var(--success)"}}>已確認</span></div>:(isMatched||hasAnyConfirm)?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><div className={`toggle-switch ${isConfirmed?"on":"off"}`} style={hasPartialConfirm?{background:"#ff9800"}:{}} role="button" tabIndex={0} title={isConfirmed?"點擊取消確認":hasPartialConfirm?"點擊確認剩餘單據":"點擊確認鎖定"} onClick={e=>{e.stopPropagation();e.preventDefault();if(isConfirmed){unconfirmReconciliation(r);}else{confirmReconciliation(r);}}}></div><span style={{fontSize:10,color:isConfirmed?"var(--success)":hasPartialConfirm?"#e65100":"var(--muted)"}}>{isConfirmed?"已確認":hasPartialConfirm?"部分確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
-          {isExpanded&&<tr className="expand-row"><td colSpan={9}>
+          {isExpanded&&<tr className="expand-row"><td colSpan={10}>
             <ExpandDetailSection expandData={expandData}
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
               onEditClick={isConfEntry?null:(tableName,item)=>{const isAsm=tableName==="assembly_items";setEditModal({show:true,tableName,type:isAsm?"assembly":"packaging",item:isAsm?{id:item.id,product_id:item.product_id,qty:item.qty,assembler:item.assembler||"",warehouse_date:item.warehouse_date||"",note:item.note||""}:{id:item.id,product_id:item.product_id,qty:item.qty,customer_id:item.customer_id||"",is_stock:item.is_stock,tester:item.tester||"",assembler:item.assembler||"",assembly_date:item.assembly_date||"",note:item.note||""}});}}
