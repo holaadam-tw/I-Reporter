@@ -56,13 +56,20 @@ tbody tr.clickable{cursor:pointer}
 .table-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;overflow-x:auto}
 .expand-row{background:#f8f7f4!important;animation:fadeIn .2s}
 .expand-row td{padding:0}
-.expand-content{padding:12px 16px}
-.expand-section{margin-bottom:12px}
-.expand-title{font-size:12px;font-weight:700;color:var(--primary);margin-bottom:6px;display:flex;align-items:center;gap:6px}
-.expand-table{width:100%;font-size:12px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
-.expand-table thead tr{background:var(--accent)}
-.expand-table thead th{padding:6px 8px;font-size:11px;cursor:default}
-.expand-table tbody td{padding:6px 8px;font-size:12px}
+.expand-content{padding:16px 20px}
+.expand-section{margin-bottom:16px;background:#f5f4f0;border-radius:8px;padding:14px 16px;border-left:4px solid var(--accent)}
+.expand-section:last-child{border-left-color:var(--primary)}
+.expand-title{font-size:13px;font-weight:700;color:var(--primary);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.expand-table{width:100%;font-size:12px;border:1px solid var(--border);border-radius:6px;overflow:hidden;border-collapse:separate;border-spacing:0}
+.expand-table thead tr{background:#2a4a3e}
+.expand-table thead th{padding:8px 10px;font-size:11px;font-weight:700;cursor:default;letter-spacing:.3px}
+.expand-table tbody td{padding:8px 10px;font-size:12px;border-bottom:1px solid var(--border)}
+.expand-table tbody tr:last-child td{border-bottom:none}
+.expand-table .qty-cell{font-family:'JetBrains Mono',monospace;font-size:1.2em;font-weight:700;color:#1a1a1a;text-align:right}
+.match-status-ok{color:#2e7d32;font-weight:600;white-space:nowrap}
+.match-status-pending{color:#e65100;font-weight:600;white-space:nowrap}
+.match-status-over{color:#c62828;font-weight:600;white-space:nowrap}
+.match-num{font-size:1.3em;font-weight:700}
 .btn{padding:7px 16px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .15s}
 .btn-primary{border:none;background:var(--primary);color:#fff}
 .btn-primary:hover{background:var(--primary-dark)}
@@ -246,22 +253,27 @@ async function loadDetailItems(productCode,dateFrom,dateTo){
   return{asm:asmItems||[],pkg:pkgItems||[]};
 }
 
-// 逐單累計配對：合併組裝/包裝，按日期 ASC 排序，計算每張單的配對狀態
+// 逐單累計配對：合併組裝/包裝，按日期 ASC 排序，用最終總數回判每筆配對狀態
 function computeMatchStatus(asmItems,pkgItems){
   const merged=[];
   (asmItems||[]).forEach(a=>merged.push({...a,_type:"asm",_date:a.assembly_orders?.order_date||"",_qty:a.qty||0}));
   (pkgItems||[]).forEach(p=>merged.push({...p,_type:"pkg",_date:p.packaging_orders?.order_date||"",_qty:p.qty||0}));
   merged.sort((a,b)=>{if(a._date<b._date)return -1;if(a._date>b._date)return 1;if(a._type==="asm"&&b._type==="pkg")return -1;if(a._type==="pkg"&&b._type==="asm")return 1;return 0;});
+  // 先算最終總數
+  const asmTotal=(asmItems||[]).reduce((s,a)=>s+(a.qty||0),0);
+  const pkgTotal=(pkgItems||[]).reduce((s,p)=>s+(p.qty||0),0);
+  // 逐筆累計，用最終總數回判
   let asmRunning=0,pkgRunning=0;
   const statusMap={};
   merged.forEach(r=>{
     if(r._type==="asm")asmRunning+=r._qty; else pkgRunning+=r._qty;
-    const diff=asmRunning-pkgRunning;
-    if(diff>=0&&r._type==="asm"){statusMap[r.id]={label:diff>0?`🔸 待包裝 ${diff}`:"✅ 已配對",color:diff>0?"#e67e22":"#27ae60",asmRunning,pkgRunning};}
-    else if(diff>=0&&r._type==="pkg"){statusMap[r.id]={label:"✅ 已配對",color:"#27ae60",asmRunning,pkgRunning};}
-    else if(diff<0&&r._type==="pkg"){statusMap[r.id]={label:`⚠️ 超出 ${-diff}`,color:"#e74c3c",asmRunning,pkgRunning};}
-    else if(diff<0&&r._type==="asm"){statusMap[r.id]={label:`⚠️ 超出 ${-diff}`,color:"#e74c3c",asmRunning,pkgRunning};}
-    else{statusMap[r.id]={label:"✅ 已配對",color:"#27ae60",asmRunning,pkgRunning};}
+    if(r._type==="asm"){
+      if(pkgTotal>=asmRunning){statusMap[r.id]={label:"✅ 已配對",color:"#2e7d32",asmRunning,pkgRunning};}
+      else{const n=asmRunning-pkgTotal;statusMap[r.id]={label:`🔸 待包裝 <span class="match-num">${n}</span>`,color:"#e65100",asmRunning,pkgRunning};}
+    }else{
+      if(asmTotal>=pkgRunning){statusMap[r.id]={label:"✅ 已配對",color:"#2e7d32",asmRunning,pkgRunning};}
+      else{const n=pkgRunning-asmTotal;statusMap[r.id]={label:`⚠️ 超出 <span class="match-num">${n}</span>`,color:"#c62828",asmRunning,pkgRunning};}
+    }
   });
   return statusMap;
 }
@@ -270,8 +282,8 @@ function computeMatchStatus(asmItems,pkgItems){
 function ExpandDetailSection({expandData,onOrderClick,onEditClick}){
   const matchStatus=useMemo(()=>computeMatchStatus(expandData.asm,expandData.pkg),[expandData.asm,expandData.pkg]);
   return <div className="expand-content">
-    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];return <tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td style={{fontWeight:700}}>{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td style={{fontWeight:600,fontSize:12,color:ms?.color||"var(--muted)",whiteSpace:"nowrap"}}>{ms?.label||"-"}</td><td>{a.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無組裝記錄</div>}</div>
-    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];return <tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td style={{fontWeight:700}}>{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td style={{fontWeight:600,fontSize:12,color:ms?.color||"var(--muted)",whiteSpace:"nowrap"}}>{ms?.label||"-"}</td><td>{p.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:4}}>無包裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th style={{textAlign:"right"}}>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];const msCls=ms?.color==="#2e7d32"?"match-status-ok":ms?.color==="#e65100"?"match-status-pending":"match-status-over";return <tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td className="qty-cell">{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{a.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無組裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th style={{textAlign:"right"}}>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];const msCls=ms?.color==="#2e7d32"?"match-status-ok":ms?.color==="#c62828"?"match-status-over":"match-status-pending";return <tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td className="qty-cell">{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{p.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無包裝記錄</div>}</div>
   </div>;
 }
 
@@ -459,9 +471,9 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</td>
             <td><code style={{fontWeight:600}}>{r.product_code}</code></td>
             <td>{r.product_name}</td>
-            <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.assembly_qty}</td>
-            <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:"right"}}>{r.packaging_qty}</td>
-            <td style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,textAlign:"right",color:r.diff>0?"var(--danger)":r.diff<0?"var(--warning)":"var(--success)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.assembly_qty}</td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.packaging_qty}</td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.2em",fontWeight:800,textAlign:"right",color:r.diff>0?"var(--danger)":r.diff<0?"var(--warning)":"var(--success)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
             <td><Badge type={statusMap[r.status]}>{r.status_desc}</Badge>{isResolved&&!isHidden&&<span className="resolve-tag" style={{marginLeft:4}}>已處理</span>}{isHidden&&<span className="resolve-tag hide-tag" style={{marginLeft:4}}>已隱藏</span>}</td>
             <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
