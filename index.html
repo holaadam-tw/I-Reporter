@@ -1021,7 +1021,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const statusMap={missing_pkg:"error",missing_asm:"warning",qty_mismatch:"warning",matched:"success",wip_normal:"info",over_packaged:"error"};
   const iconBg={total:"var(--accent)",success:"var(--success)",warning:"var(--warning)",error:"var(--danger)",info:"#2D5F8A",pending:"#e65100"};
   const SortTh=({col,children,style:s})=>(<th onClick={()=>toggleSort(col)} className={sortCol===col?"sorted":""} style={s}>{children}<span className="sort-arrow">{sortCol===col?(sortDir==="asc"?"▲":"▼"):"⇅"}</span></th>);
-  const stats=[{key:"all",l:"總產品數",v:allVisible.length,t:"total",i:"📦"},{key:"confirmed",l:"已確認",v:confirmedCount,t:"success",i:"✅"},{key:"unconfirmed",l:"未確認",v:unconfirmedCount,t:"pending",i:"⏳"},{key:"wip",l:"在製品",v:wip,t:"info",i:"🔄"},{key:"over",l:"包裝超出",v:overPkg,t:"error",i:"📛"},{key:"missing",l:"漏單",v:errors,t:"error",i:"✕"}];
+  const stats=[{key:"all",l:"總產品數",v:allVisible.length,t:"total",i:"📦"},{key:"confirmed",l:"核對一致 已確認",v:confirmedCount,t:"success",i:"✅"},{key:"unconfirmed",l:"核對一致 未確認",v:unconfirmedCount,t:"pending",i:"⏳"},{key:"wip",l:"在製品",v:wip,t:"info",i:"🔄"},{key:"over",l:"包裝超出",v:overPkg,t:"error",i:"📛"},{key:"missing",l:"漏單",v:errors,t:"error",i:"✕"}];
   const addStaff=async(name,role,code)=>{try{await supaFetch("staff",{method:"POST",body:{name,role,code:code||null}});toast(`人員「${name}」新增成功`,"success");reloadStaff();}catch(e){toast("新增失敗: "+e.message,"error");}};
 
   return <div>
