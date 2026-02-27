@@ -227,7 +227,7 @@ function exportToExcel(data,columns,filename){
 function fullWidthToHalf(str){
   if(!str)return"";
   return String(str).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
-    .replace(/／/g,"/").replace(/：/g,":").replace(/　/g," ");
+    .replace(/／/g,"/").replace(/：/g,":").replace(/　/g," ").replace(/＋/g,"+");
 }
 function parseExcelDate(raw,yearHint){
   if(!raw)return null;
@@ -276,7 +276,11 @@ function parseAssemblySheet(sheet,products){
     const asmCode2=fullWidthToHalf(String(getCellValue(sheet,r,27)||"")).trim();
     const serial=fullWidthToHalf(String(getCellValue(sheet,r,31)||"")).trim();
     const whDateRaw=getCellValue(sheet,r,33);
-    const whDate=parseExcelDate(whDateRaw,yearHint);
+    // 格式 "MM/DD:數量" or "MM/DD:數量/數量" — 取冒號前面
+    let whDateStr=fullWidthToHalf(String(whDateRaw||"")).trim();
+    const colonIdx=whDateStr.indexOf(":");
+    if(colonIdx>0)whDateStr=whDateStr.substring(0,colonIdx);
+    const whDate=parseExcelDate(whDateStr,yearHint);
     const noteRaw=String(getCellValue(sheet,r,45)||"").trim();
     // Collect staff codes
     if(asmCode1)staffCodes.add(asmCode1);
@@ -304,7 +308,8 @@ function parsePackagingSheet(sheet,products,customers){
     const code=fullWidthToHalf(String(getCellValue(sheet,r,0)||"")).trim();
     const name=String(getCellValue(sheet,r,6)||"").trim();
     const qty=parseInt(getCellValue(sheet,r,21));
-    const custName=String(getCellValue(sheet,r,25)||"").trim();
+    let custName=fullWidthToHalf(String(getCellValue(sheet,r,25)||"")).trim();
+    custName=custName.replace(/\+庫存$/,"").trim(); // "上海+庫存" → "上海"
     const testerCode=fullWidthToHalf(String(getCellValue(sheet,r,33)||"")).trim();
     const inspectorCode=fullWidthToHalf(String(getCellValue(sheet,r,35)||"")).trim();
     const asmDateRaw=getCellValue(sheet,r,37);
