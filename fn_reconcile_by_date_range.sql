@@ -1,7 +1,7 @@
 -- ============================================================
 -- fn_reconcile_by_date_range: 區間累計核對函數
 -- 在指定日期範圍內，按產品彙總組裝/包裝數量並比較
--- 新增狀態：wip_normal（在製品）、over_packaged（包裝超出）
+-- 扣除已確認鎖定的數量（reconciliation_confirmed）
 -- ============================================================
 
 DROP FUNCTION IF EXISTS fn_reconcile_by_date_range(DATE, DATE);
@@ -24,6 +24,10 @@ RETURNS TABLE (
   resolved_by TEXT,
   resolved_note TEXT,
   hidden BOOLEAN,
+  confirmed_at TIMESTAMPTZ,
+  confirmed_by TEXT,
+  confirmed_asm_qty BIGINT,
+  confirmed_pkg_qty BIGINT,
   status TEXT,
   status_desc TEXT
 ) LANGUAGE plpgsql AS $$
@@ -49,6 +53,17 @@ BEGIN
     WHERE po.order_date BETWEEN p_date_from AND p_date_to
     GROUP BY p.id, p.product_id, p.product_name
   ),
+  -- 已確認鎖定的數量（日期區間有重疊就算）
+  conf AS (
+    SELECT rc.product_id AS pid,
+      SUM(rc.assembly_qty) AS conf_asm,
+      SUM(rc.packaging_qty) AS conf_pkg,
+      MAX(rc.confirmed_at) AS last_confirmed_at,
+      MAX(rc.confirmed_by) AS last_confirmed_by
+    FROM reconciliation_confirmed rc
+    WHERE rc.date_from <= p_date_to AND rc.date_to >= p_date_from
+    GROUP BY rc.product_id
+  ),
   combined AS (
     SELECT
       COALESCE(a.p_code, k.p_code) AS product_code,
@@ -57,11 +72,17 @@ BEGIN
       COALESCE(a.first_date, k.first_date) AS order_date,
       a.first_date AS first_asm_date,
       k.first_date AS first_pkg_date,
-      COALESCE(a.total_qty, 0) AS assembly_qty,
-      COALESCE(k.total_qty, 0) AS packaging_qty,
-      COALESCE(a.total_qty, 0) - COALESCE(k.total_qty, 0) AS diff
+      GREATEST(COALESCE(a.total_qty, 0) - COALESCE(cf.conf_asm, 0), 0) AS assembly_qty,
+      GREATEST(COALESCE(k.total_qty, 0) - COALESCE(cf.conf_pkg, 0), 0) AS packaging_qty,
+      GREATEST(COALESCE(a.total_qty, 0) - COALESCE(cf.conf_asm, 0), 0)
+        - GREATEST(COALESCE(k.total_qty, 0) - COALESCE(cf.conf_pkg, 0), 0) AS diff,
+      cf.last_confirmed_at,
+      cf.last_confirmed_by,
+      COALESCE(cf.conf_asm, 0) AS confirmed_asm_qty,
+      COALESCE(cf.conf_pkg, 0) AS confirmed_pkg_qty
     FROM asm a
-    FULL OUTER JOIN pkg k ON a.p_code = k.p_code
+    FULL OUTER JOIN pkg k ON a.pid = k.pid
+    LEFT JOIN conf cf ON cf.pid = COALESCE(a.pid, k.pid)
   ),
   resolved AS (
     SELECT DISTINCT ON (rr.product_id) rr.product_id, rr.resolved_at, rr.resolved_by,
@@ -82,7 +103,12 @@ BEGIN
     r.resolved_by,
     r.resolved_note,
     COALESCE(r.hidden, false) AS hidden,
+    c.last_confirmed_at AS confirmed_at,
+    c.last_confirmed_by AS confirmed_by,
+    c.confirmed_asm_qty,
+    c.confirmed_pkg_qty,
     CASE
+      WHEN c.assembly_qty = 0 AND c.packaging_qty = 0 THEN 'matched'
       WHEN c.assembly_qty = 0 THEN 'missing_asm'
       WHEN c.packaging_qty = 0 THEN 'missing_pkg'
       WHEN c.assembly_qty > c.packaging_qty AND c.packaging_qty > 0 THEN 'wip_normal'
@@ -91,6 +117,7 @@ BEGIN
       ELSE 'matched'
     END AS status,
     CASE
+      WHEN c.assembly_qty = 0 AND c.packaging_qty = 0 THEN '核對一致'
       WHEN c.assembly_qty = 0 THEN '有包裝無組裝'
       WHEN c.packaging_qty = 0 THEN '有組裝無包裝'
       WHEN c.assembly_qty > c.packaging_qty AND c.packaging_qty > 0 THEN '在製品(正常)'
@@ -100,6 +127,7 @@ BEGIN
     END AS status_desc
   FROM combined c
   LEFT JOIN resolved r ON r.product_id = c.product_id
+  WHERE NOT (c.assembly_qty = 0 AND c.packaging_qty = 0)
   ORDER BY
     CASE
       WHEN c.assembly_qty = 0 THEN 0
