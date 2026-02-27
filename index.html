@@ -756,10 +756,12 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
     const cm={};
     (confRows||[]).forEach(c=>{
       const pid=c.product_id;
-      if(!cm[pid])cm[pid]={asm:0,pkg:0,at:null,by:null};
+      if(!cm[pid])cm[pid]={asm:0,pkg:0,at:null,by:null,dateFrom:null,dateTo:null};
       cm[pid].asm+=(c.assembly_qty||0);
       cm[pid].pkg+=(c.packaging_qty||0);
       if(!cm[pid].at||c.confirmed_at>cm[pid].at){cm[pid].at=c.confirmed_at;cm[pid].by=c.confirmed_by;}
+      if(c.date_from&&(!cm[pid].dateFrom||c.date_from<cm[pid].dateFrom))cm[pid].dateFrom=c.date_from;
+      if(c.date_to&&(!cm[pid].dateTo||c.date_to>cm[pid].dateTo))cm[pid].dateTo=c.date_to;
     });
     // 2. 調整原產品行
     const adjusted=rows.map(r=>{
@@ -780,6 +782,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       else{status="qty_mismatch";status_desc="數量差異";}
       return{...r,assembly_qty:adjAsm,packaging_qty:adjPkg,diff:adjDiff,
         confirmed_asm_qty:cf.asm,confirmed_pkg_qty:cf.pkg,confirmed_at:cf.at,confirmed_by:cf.by,
+        confirmed_date_from:cf.dateFrom,confirmed_date_to:cf.dateTo,
         status,status_desc};
     }).filter(r=>r.status!=="fully_confirmed");
     // 3. 產生確認行（每筆 reconciliation_confirmed 記錄 → 一行核對一致）
@@ -1044,7 +1047,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
         return <React.Fragment key={rowKey+"_"+i}>
           <tr className={cls} onClick={()=>loadDetail(r)}>
             <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExpanded?"▼":"▶"}</td>
-            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</td>
+            <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{hasPartialConfirm&&r.confirmed_date_from?<div style={{lineHeight:1.3}}><div style={{color:"var(--text)"}}>{r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</div><div style={{fontSize:10,color:"var(--success)"}}>🔒 {r.confirmed_date_from===r.confirmed_date_to?r.confirmed_date_from.slice(5):r.confirmed_date_from.slice(5)+"~"+r.confirmed_date_to.slice(5)}</div></div>:isConfEntry&&r.date_from?r.date_from+(r.date_to&&r.date_to!==r.date_from?" ~ "+r.date_to:""):r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</td>
             <td><code style={{fontWeight:600}}>{r.product_code}</code></td>
             <td>{r.product_name}</td>
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.assembly_qty}{!isConfEntry&&r.confirmed_asm_qty>0&&<span style={{fontSize:10,color:"var(--success)",marginLeft:3}} title={`已確認 ${r.confirmed_asm_qty}`}>(+{r.confirmed_asm_qty})</span>}</td>
