@@ -631,12 +631,12 @@ function computeMatchStatus(asmItems,pkgItems){
 
 // Shared: expand detail rows for asm/pkg items with clickable order numbers
 // Optional props: checkedIds, confirmedIds, onCheck — 用於有差異行的逐筆勾選確認
-function ExpandDetailSection({expandData,onOrderClick,onEditClick,onDeleteClick,checkedIds,confirmedIds,onCheck}){
+function ExpandDetailSection({expandData,onOrderClick,onEditClick,onDeleteClick,checkedIds,confirmedIds,onCheck,onUnlockItem}){
   const matchStatus=useMemo(()=>computeMatchStatus(expandData.asm,expandData.pkg),[expandData.asm,expandData.pkg]);
   const showCheck=!!onCheck;
   return <div className="expand-content">
-    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr>{showCheck&&<th style={{width:30}}></th>}<th>單號</th><th>組裝日期</th><th style={{textAlign:"right"}}>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{(onEditClick||onDeleteClick)&&<th style={{width:90}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];const isOk=ms?.color==="#2e7d32";const msCls=isOk?"match-status-ok":ms?.color==="#e65100"?"match-status-pending":"match-status-over";const alreadyConfirmed=confirmedIds&&confirmedIds.has(a.id);return <tr key={a.id} style={alreadyConfirmed?{opacity:.5}:{}}>{showCheck&&<td style={{textAlign:"center"}}>{isOk&&!alreadyConfirmed?<input type="checkbox" style={{width:15,height:15,cursor:"pointer"}} checked={checkedIds?.has(a.id)||false} onChange={()=>onCheck(a.id)}/>:alreadyConfirmed?<span title="已確認" style={{color:"var(--success)",fontSize:14}}>✓</span>:null}</td>}<td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td className="qty-cell">{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{a.note||"-"}</td>{(onEditClick||onDeleteClick)&&<td>{onEditClick&&<button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button>}{onDeleteClick&&!alreadyConfirmed&&<button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)",marginLeft:4}} onClick={e=>{e.stopPropagation();onDeleteClick("assembly_items",a);}}>刪除</button>}</td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無組裝記錄</div>}</div>
-    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr>{showCheck&&<th style={{width:30}}></th>}<th>單號</th><th>包裝日期</th><th style={{textAlign:"right"}}>數量</th><th>客戶</th><th>測試人員</th><th>組裝人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{(onEditClick||onDeleteClick)&&<th style={{width:90}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];const isOk=ms?.color==="#2e7d32";const msCls=isOk?"match-status-ok":ms?.color==="#c62828"?"match-status-over":"match-status-pending";const alreadyConfirmed=confirmedIds&&confirmedIds.has(p.id);return <tr key={p.id} style={alreadyConfirmed?{opacity:.5}:{}}>{showCheck&&<td style={{textAlign:"center"}}>{isOk&&!alreadyConfirmed?<input type="checkbox" style={{width:15,height:15,cursor:"pointer"}} checked={checkedIds?.has(p.id)||false} onChange={()=>onCheck(p.id)}/>:alreadyConfirmed?<span title="已確認" style={{color:"var(--success)",fontSize:14}}>✓</span>:null}</td>}<td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td className="qty-cell">{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.assembler||"-"}</td><td>{p.assembly_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{p.note||"-"}</td>{(onEditClick||onDeleteClick)&&<td>{onEditClick&&<button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button>}{onDeleteClick&&!alreadyConfirmed&&<button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)",marginLeft:4}} onClick={e=>{e.stopPropagation();onDeleteClick("packaging_items",p);}}>刪除</button>}</td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無包裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr>{showCheck&&<th style={{width:30}}></th>}<th>單號</th><th>組裝日期</th><th style={{textAlign:"right"}}>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{(onEditClick||onDeleteClick)&&<th style={{width:90}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];const isOk=ms?.color==="#2e7d32";const msCls=isOk?"match-status-ok":ms?.color==="#e65100"?"match-status-pending":"match-status-over";const alreadyConfirmed=confirmedIds&&confirmedIds.has(a.id);return <tr key={a.id} style={alreadyConfirmed?{opacity:.5}:{}}>{showCheck&&<td style={{textAlign:"center"}}>{isOk&&!alreadyConfirmed?<input type="checkbox" style={{width:15,height:15,cursor:"pointer"}} checked={checkedIds?.has(a.id)||false} onChange={()=>onCheck(a.id)}/>:alreadyConfirmed?<span title="點擊解鎖" style={{color:"var(--success)",fontSize:14,cursor:onUnlockItem?"pointer":"default"}} onClick={()=>onUnlockItem&&onUnlockItem(a.id)}>🔒</span>:null}</td>}<td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td className="qty-cell">{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{a.note||"-"}</td>{(onEditClick||onDeleteClick)&&<td>{onEditClick&&<button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button>}{onDeleteClick&&!alreadyConfirmed&&<button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)",marginLeft:4}} onClick={e=>{e.stopPropagation();onDeleteClick("assembly_items",a);}}>刪除</button>}</td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無組裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr>{showCheck&&<th style={{width:30}}></th>}<th>單號</th><th>包裝日期</th><th style={{textAlign:"right"}}>數量</th><th>客戶</th><th>測試人員</th><th>組裝人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{(onEditClick||onDeleteClick)&&<th style={{width:90}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];const isOk=ms?.color==="#2e7d32";const msCls=isOk?"match-status-ok":ms?.color==="#c62828"?"match-status-over":"match-status-pending";const alreadyConfirmed=confirmedIds&&confirmedIds.has(p.id);return <tr key={p.id} style={alreadyConfirmed?{opacity:.5}:{}}>{showCheck&&<td style={{textAlign:"center"}}>{isOk&&!alreadyConfirmed?<input type="checkbox" style={{width:15,height:15,cursor:"pointer"}} checked={checkedIds?.has(p.id)||false} onChange={()=>onCheck(p.id)}/>:alreadyConfirmed?<span title="點擊解鎖" style={{color:"var(--success)",fontSize:14,cursor:onUnlockItem?"pointer":"default"}} onClick={()=>onUnlockItem&&onUnlockItem(p.id)}>🔒</span>:null}</td>}<td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td className="qty-cell">{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.assembler||"-"}</td><td>{p.assembly_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{p.note||"-"}</td>{(onEditClick||onDeleteClick)&&<td>{onEditClick&&<button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button>}{onDeleteClick&&!alreadyConfirmed&&<button className="btn-edit" style={{borderColor:"var(--danger)",color:"var(--danger)",marginLeft:4}} onClick={e=>{e.stopPropagation();onDeleteClick("packaging_items",p);}}>刪除</button>}</td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無包裝記錄</div>}</div>
   </div>;
 }
 
@@ -747,6 +747,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[editModal,setEditModal]=useState({show:false,item:null,tableName:"",type:""});
   const[checkedIds,setCheckedIds]=useState(new Set());
   const[confirmedIds,setConfirmedIds]=useState(new Set());
+  const[itemToRecordMap,setItemToRecordMap]=useState({});
   const[page,setPage]=useState(1);const[pageSize,setPageSize]=useState(50);
 
   // 前端扣除已確認數量 + 產生確認行
@@ -813,13 +814,20 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
   const searchByDate=async()=>{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);setLoading(true);try{setData(await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt})||[]);}catch(e){console.error(e);load();}setLoading(false);};
 
-  const loadConfirmedIds=async(productCode)=>{
+  const loadConfirmedIds=async(productId)=>{
     try{
-      const rows=await supaFetch("reconciliation_confirmed",{query:`select=confirmed_item_ids,products!inner(product_id)&products.product_id=eq.${encodeURIComponent(productCode)}`});
+      const rows=await supaFetch("reconciliation_confirmed",{query:`select=id,confirmed_item_ids&product_id=eq.${productId}`});
       const ids=new Set();
-      (rows||[]).forEach(r=>{(r.confirmed_item_ids||[]).forEach(id=>ids.add(id));});
+      const map={};
+      (rows||[]).forEach(r=>{
+        (r.confirmed_item_ids||[]).forEach(itemId=>{
+          ids.add(itemId);
+          map[itemId]=r.id;
+        });
+      });
       setConfirmedIds(ids);
-    }catch(e){console.error("loadConfirmedIds error:",e);setConfirmedIds(new Set());}
+      setItemToRecordMap(map);
+    }catch(e){console.error("loadConfirmedIds error:",e);setConfirmedIds(new Set());setItemToRecordMap({});}
   };
 
   const loadDetail=async(row)=>{
@@ -835,12 +843,23 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
       }else{
         setExpandData(detail);
         // 非 matched 行才載入 confirmedIds（用於勾選確認）
-        if(row.status!=="matched"&&!row.is_confirmed_entry){await loadConfirmedIds(row.product_code);}
+        if(row.status!=="matched"&&!row.is_confirmed_entry){await loadConfirmedIds(row.product_id);}
       }
     }catch(e){console.error(e);setExpandData({asm:[],pkg:[],cnv:[]});}
   };
 
   const handleCheck=(id)=>{setCheckedIds(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});};
+
+  const handleUnlockItem=async(itemId)=>{
+    const recordId=itemToRecordMap[itemId];
+    if(!recordId){toast("找不到對應的確認記錄","error");return;}
+    if(!confirm("確定要解鎖這筆單據嗎？"))return;
+    try{
+      await supaDelete("reconciliation_confirmed",`id=eq.${recordId}`);
+      toast("已解鎖","success");
+      reloadAndReexpand();
+    }catch(e){toast("解鎖失敗: "+e.message,"error");}
+  };
 
   const handleConfirmBatch=async(row)=>{
     if(checkedIds.size===0)return;
@@ -868,34 +887,35 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const markHidden=async(productId)=>{updateLocal(productId,{hidden:true});try{await supaPatch("reconciliation_resolved",`product_id=eq.${productId}`,{hidden:true});}catch(e){toast("標記失敗: "+e.message,"error");updateLocal(productId,{hidden:false});}};
   const unmarkHidden=async(productId)=>{updateLocal(productId,{hidden:false});try{await supaPatch("reconciliation_resolved",`product_id=eq.${productId}`,{hidden:false});}catch(e){toast("取消失敗: "+e.message,"error");updateLocal(productId,{hidden:true});}};
 
-  // 確認鎖定（toggle）— upsert 防重複 + 樂觀更新 + 完整刷新
+  // 確認鎖定（toggle）— 逐單配對，plain INSERT + confirmed_item_ids
   const confirmReconciliation=async(row)=>{
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
-    // 先即時更新 UI（樂觀更新）
-    updateLocal(row.product_id,{confirmed_at:new Date().toISOString(),confirmed_by:"系統使用者"});
+    // 收集展開區所有未確認的 item IDs
+    const allIds=[];
+    (expandData.asm||[]).forEach(a=>{if(!confirmedIds.has(a.id))allIds.push(a.id);});
+    (expandData.pkg||[]).forEach(p=>{if(!confirmedIds.has(p.id))allIds.push(p.id);});
+    if(allIds.length===0){toast("沒有可確認的單據","warning");return;}
+    const asmItems=(expandData.asm||[]).filter(a=>!confirmedIds.has(a.id));
+    const pkgItems=(expandData.pkg||[]).filter(p=>!confirmedIds.has(p.id));
+    const asmQty=asmItems.reduce((s,a)=>s+(a.qty||0),0);
+    const pkgQty=pkgItems.reduce((s,p)=>s+(p.qty||0),0);
     try{
-      const body={product_id:row.product_id,date_from:df,date_to:dt,assembly_qty:Number(row.assembly_qty),packaging_qty:Number(row.packaging_qty),confirmed_by:"系統使用者"};
-      await supaFetch("reconciliation_confirmed",{method:"POST",body,headers:{Prefer:"return=representation,resolution=merge-duplicates"}});
-      toast(`${row.product_code} 已確認鎖定`,"success");
-      load(); // 完整刷新以重算 adjusted 值
-    }catch(e){
-      updateLocal(row.product_id,{confirmed_at:null,confirmed_by:null});
-      toast("確認失敗: "+e.message,"error");
-    }
+      await supaFetch("reconciliation_confirmed",{method:"POST",body:{product_id:row.product_id,date_from:df,date_to:dt,assembly_qty:asmQty,packaging_qty:pkgQty,confirmed_item_ids:allIds,confirmed_by:"系統使用者"}});
+      toast(`${row.product_code} 已確認鎖定 (${allIds.length} 筆)`,"success");
+      reloadAndReexpand();
+    }catch(e){toast("確認失敗: "+e.message,"error");}
   };
   const unconfirmReconciliation=async(row)=>{
     if(!confirm(`確定要取消「${row.product_code}」的確認鎖定嗎？`))return;
     try{
-      // 確認行用 id 刪除，一般行用 product_id + 日期刪除
       if(row.confirmed_record_id){
         await supaDelete("reconciliation_confirmed",`id=eq.${row.confirmed_record_id}`);
       }else{
-        const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
-        await supaDelete("reconciliation_confirmed",`product_id=eq.${row.product_id}&date_from=eq.${df}&date_to=eq.${dt}`);
+        await supaDelete("reconciliation_confirmed",`product_id=eq.${row.product_id}`);
       }
       toast(`已取消 ${row.product_code} 的確認鎖定`,"success");
       setExpandedRow(null);
-      load(); // 完整刷新
+      load();
     }catch(e){toast("取消確認失敗: "+e.message,"error");}
   };
 
@@ -997,7 +1017,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
               onEditClick={isConfEntry?null:(tableName,item)=>{const isAsm=tableName==="assembly_items";setEditModal({show:true,tableName,type:isAsm?"assembly":"packaging",item:isAsm?{id:item.id,product_id:item.product_id,qty:item.qty,assembler:item.assembler||"",warehouse_date:item.warehouse_date||"",note:item.note||""}:{id:item.id,product_id:item.product_id,qty:item.qty,customer_id:item.customer_id||"",is_stock:item.is_stock,tester:item.tester||"",assembler:item.assembler||"",assembly_date:item.assembly_date||"",note:item.note||""}});}}
               onDeleteClick={isConfEntry?null:handleDeleteItem}
-              {...(needsAction&&!isConfEntry?{checkedIds,confirmedIds,onCheck:handleCheck}:{})}/>
+              {...(needsAction&&!isConfEntry?{checkedIds,confirmedIds,onCheck:handleCheck,onUnlockItem:handleUnlockItem}:{})}/>
             {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
             {needsAction&&!isConfEntry&&checkedIds.size>0&&<div style={{display:"flex",gap:8,padding:"4px 16px 12px",alignItems:"center"}}><button className="btn btn-sm btn-primary" style={{background:"var(--success)"}} onClick={()=>handleConfirmBatch(r)}>確認已勾選 ({checkedIds.size} 筆)</button><button className="btn btn-sm btn-secondary" onClick={()=>setCheckedIds(new Set())}>清除勾選</button></div>}
             {needsAction&&!isConfEntry&&!supplementing&&<div style={{display:"flex",gap:8,padding:"0 16px 12px"}}>
