@@ -717,6 +717,10 @@ function SupplementForm({supplementing,suppForm,setSuppForm,customers,staff,onSu
         <StaffSelect staff={staff} value={suppForm.tester} onChange={v=>setSuppForm({...suppForm,tester:v})} onAdd={()=>onAddStaff("tester")} roleFilter="tester" multi style={{width:160}}/>
         <span className="filter-label">組裝人員：</span>
         <StaffSelect staff={staff} value={suppForm.pkgAssembler} onChange={v=>setSuppForm({...suppForm,pkgAssembler:v})} onAdd={()=>onAddStaff("assembler")} roleFilter="assembler" multi style={{width:160}}/>
+        <span className="filter-label">組裝日期：</span>
+        <input type="date" className="input" style={{width:140}} value={suppForm.pkgAsmDate||""} onChange={e=>setSuppForm({...suppForm,pkgAsmDate:e.target.value})}/>
+        <span className="filter-label">包裝日期：</span>
+        <input type="date" className="input" style={{width:140}} value={suppForm.pkgOrderDate||""} onChange={e=>setSuppForm({...suppForm,pkgOrderDate:e.target.value})}/>
       </>}
     </div>
     <div className="form-row" style={{marginTop:6}}>
@@ -738,7 +742,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[expandedRow,setExpandedRow]=useState(null);const[expandData,setExpandData]=useState({asm:[],pkg:[],cnv:[]});
   const[showHidden,setShowHidden]=useState(false);const[showMatched,setShowMatched]=useState(false);
   const[supplementing,setSupplementing]=useState(null);
-  const[suppForm,setSuppForm]=useState({qty:1,assembler:"",tester:"",pkgAssembler:"",customer_id:"",assembly_date:"",note:""});
+  const[suppForm,setSuppForm]=useState({qty:1,assembler:"",tester:"",pkgAssembler:"",customer_id:"",assembly_date:"",pkgAsmDate:"",pkgOrderDate:"",note:""});
   const[staffModal,setStaffModal]=useState({show:false,role:"general"});
   const[editModal,setEditModal]=useState({show:false,item:null,tableName:"",type:""});
   const[checkedIds,setCheckedIds]=useState(new Set());
@@ -907,7 +911,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
 
   const handleDeleteItem=async(tableName,item)=>{const pid=item.product_id;const conf=await supaFetch("reconciliation_confirmed",{query:`select=id&product_id=eq.${pid}`});if(conf&&conf.length>0){toast("此產品已在核對報告中確認，無法刪除","error");return;}if(!confirm("確定刪除此筆明細？此操作不可復原。"))return;try{await supaDelete(tableName,`id=eq.${item.id}`);toast("已刪除","success");reloadAndReexpand();}catch(e){toast("刪除失敗: "+e.message,"error");}};
 
-  const submitSupplement=async()=>{if(!supplementing)return;const{product_id,type}=supplementing;const qty=parseInt(suppForm.qty);if(!qty||qty<=0){toast("請輸入正確數量","error");return;}try{if(type==="asm"){const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:suppForm.order_date||new Date().toISOString().slice(0,10),status:"draft"}});await supaFetch("assembly_items",{method:"POST",body:{order_id:order.id,product_id,qty,assembler:suppForm.assembler||null,warehouse_date:suppForm.assembly_date||null,note:suppForm.note||"補單"}});toast(`組裝補單成功！${order.order_no}`,"success");}else{const[order]=await supaFetch("packaging_orders",{method:"POST",body:{order_date:new Date().toISOString().slice(0,10),status:"draft"}});await supaFetch("packaging_items",{method:"POST",body:{order_id:order.id,product_id,qty,customer_id:suppForm.customer_id||null,is_stock:!suppForm.customer_id,tester:suppForm.tester||null,assembler:suppForm.pkgAssembler||null,assembly_date:suppForm.assembly_date||null,note:suppForm.note||"補單"}});toast(`包裝補單成功！${order.order_no}`,"success");}setSupplementing(null);setSuppForm({qty:1,assembler:"",tester:"",pkgAssembler:"",customer_id:"",assembly_date:"",note:""});load();}catch(e){toast("補單失敗: "+e.message,"error");}};
+  const submitSupplement=async()=>{if(!supplementing)return;const{product_id,type}=supplementing;const qty=parseInt(suppForm.qty);if(!qty||qty<=0){toast("請輸入正確數量","error");return;}try{if(type==="asm"){const[order]=await supaFetch("assembly_orders",{method:"POST",body:{order_date:suppForm.order_date||new Date().toISOString().slice(0,10),status:"draft"}});await supaFetch("assembly_items",{method:"POST",body:{order_id:order.id,product_id,qty,assembler:suppForm.assembler||null,warehouse_date:suppForm.assembly_date||null,note:suppForm.note||"補單"}});toast(`組裝補單成功！${order.order_no}`,"success");}else{const[order]=await supaFetch("packaging_orders",{method:"POST",body:{order_date:suppForm.pkgOrderDate||new Date().toISOString().slice(0,10),status:"draft"}});await supaFetch("packaging_items",{method:"POST",body:{order_id:order.id,product_id,qty,customer_id:suppForm.customer_id||null,is_stock:!suppForm.customer_id,tester:suppForm.tester||null,assembler:suppForm.pkgAssembler||null,assembly_date:suppForm.pkgAsmDate||null,note:suppForm.note||"補單"}});toast(`包裝補單成功！${order.order_no}`,"success");}setSupplementing(null);setSuppForm({qty:1,assembler:"",tester:"",pkgAssembler:"",customer_id:"",assembly_date:"",pkgAsmDate:"",pkgOrderDate:"",note:""});load();}catch(e){toast("補單失敗: "+e.message,"error");}};
 
   const setFilterAndReset=(f)=>{setFilter(f);setPage(1);};
   const statusFilter=r=>{if(filter==="all")return true;if(filter==="matched")return r.status==="matched";if(filter==="mismatch")return r.status==="qty_mismatch";if(filter==="missing")return r.status==="missing_pkg"||r.status==="missing_asm";if(filter==="wip")return r.status==="wip_normal";if(filter==="over")return r.status==="over_packaged";return true;};
