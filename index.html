@@ -121,6 +121,11 @@ select.input{cursor:pointer}
 .resolve-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:var(--primary-light);color:var(--primary);border:1px solid rgba(26,107,78,.2)}
 .hide-tag{background:var(--warning-light);color:var(--warning);border:1px solid rgba(184,134,11,.2)}
 .confirmed-tag{background:rgba(39,174,96,.12);color:#1a6b4e;border:1px solid rgba(39,174,96,.3)}
+.toggle-switch{position:relative;width:40px;height:22px;border-radius:11px;cursor:pointer;transition:all .2s;border:none;padding:0;outline:none}
+.toggle-switch.off{background:#ccc}
+.toggle-switch.on{background:var(--success)}
+.toggle-switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.toggle-switch.on::after{transform:translateX(18px)}
 .footer{text-align:center;padding:20px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:30px}
 .show-resolved-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
 .show-resolved-toggle input{accent-color:var(--primary)}
@@ -281,26 +286,11 @@ function computeMatchStatus(asmItems,pkgItems){
 }
 
 // Shared: expand detail rows for asm/pkg items with clickable order numbers
-// confirmMode props: checkedIds(Set), confirmedIds(Set), onCheck(id,type), onConfirmBatch()
-function ExpandDetailSection({expandData,onOrderClick,onEditClick,checkedIds,confirmedIds,onCheck,onConfirmBatch}){
+function ExpandDetailSection({expandData,onOrderClick,onEditClick}){
   const matchStatus=useMemo(()=>computeMatchStatus(expandData.asm,expandData.pkg),[expandData.asm,expandData.pkg]);
-  const hasConfirm=!!onCheck;
-  const isOk=id=>matchStatus[id]?.label==="✅ 已配對";
-  const isCfd=id=>confirmedIds&&confirmedIds.has(id);
-  const isChk=id=>checkedIds&&checkedIds.has(id);
-  // 統計勾選
-  const chkAsmQty=hasConfirm?(expandData.asm||[]).filter(a=>isChk(a.id)).reduce((s,a)=>s+(a.qty||0),0):0;
-  const chkPkgQty=hasConfirm?(expandData.pkg||[]).filter(p=>isChk(p.id)).reduce((s,p)=>s+(p.qty||0),0):0;
-  const chkCount=checkedIds?checkedIds.size:0;
   return <div className="expand-content">
-    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr>{hasConfirm&&<th style={{width:36}}>確認</th>}<th>單號</th><th>組裝日期</th><th style={{textAlign:"right"}}>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];const msCls=ms?.color==="#2e7d32"?"match-status-ok":ms?.color==="#e65100"?"match-status-pending":"match-status-over";const cfmd=isCfd(a.id);return <tr key={a.id} style={cfmd?{background:"rgba(39,174,96,.08)"}:isChk(a.id)?{background:"rgba(39,174,96,.04)"}:{}}>{hasConfirm&&<td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{cfmd?<span style={{color:"var(--success)",fontSize:14}} title="已確認鎖定">✅</span>:isOk(a.id)?<input type="checkbox" style={{width:16,height:16,cursor:"pointer"}} checked={isChk(a.id)} onChange={()=>onCheck(a.id,"asm")}/>:<span style={{color:"var(--muted)"}}>—</span>}</td>}<td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td className="qty-cell">{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:cfmd?"<span style='color:#2e7d32'>✅ 已確認</span>":ms?.label||"-"}}/><td>{a.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無組裝記錄</div>}</div>
-    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr>{hasConfirm&&<th style={{width:36}}>確認</th>}<th>單號</th><th>包裝日期</th><th style={{textAlign:"right"}}>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];const msCls=ms?.color==="#2e7d32"?"match-status-ok":ms?.color==="#c62828"?"match-status-over":"match-status-pending";const cfmd=isCfd(p.id);return <tr key={p.id} style={cfmd?{background:"rgba(39,174,96,.08)"}:isChk(p.id)?{background:"rgba(39,174,96,.04)"}:{}}>{hasConfirm&&<td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{cfmd?<span style={{color:"var(--success)",fontSize:14}} title="已確認鎖定">✅</span>:isOk(p.id)?<input type="checkbox" style={{width:16,height:16,cursor:"pointer"}} checked={isChk(p.id)} onChange={()=>onCheck(p.id,"pkg")}/>:<span style={{color:"var(--muted)"}}>—</span>}</td>}<td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td className="qty-cell">{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:cfmd?"<span style='color:#2e7d32'>✅ 已確認</span>":ms?.label||"-"}}/><td>{p.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無包裝記錄</div>}</div>
-    {hasConfirm&&chkCount>0&&<div style={{background:"#eaf5ee",border:"1px solid rgba(39,174,96,.3)",borderRadius:8,padding:"10px 16px",display:"flex",alignItems:"center",gap:12,marginTop:4}}>
-      <span style={{fontSize:13}}>已勾選 <strong>{chkCount}</strong> 筆</span>
-      <span style={{fontSize:12,color:"var(--muted)"}}>（組裝 <strong style={{color:"var(--accent)"}}>{chkAsmQty}</strong> + 包裝 <strong style={{color:"var(--primary)"}}>{chkPkgQty}</strong>）</span>
-      {chkAsmQty>0&&chkPkgQty>0?<button className="btn btn-sm" style={{background:"var(--success)",color:"#fff",border:"none",marginLeft:"auto"}} onClick={onConfirmBatch}>✅ 確認核對一致</button>
-      :<span style={{marginLeft:"auto",fontSize:12,color:"var(--warning)"}}>⚠ 請同時勾選組裝單和包裝單</span>}
-    </div>}
+    <div className="expand-section"><div className="expand-title">🔧 組裝單記錄 ({expandData.asm.length}筆)</div>{expandData.asm.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>組裝日期</th><th style={{textAlign:"right"}}>數量</th><th>組裝人員</th><th>入庫日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.asm.map(a=>{const ms=matchStatus[a.id];const msCls=ms?.color==="#2e7d32"?"match-status-ok":ms?.color==="#e65100"?"match-status-pending":"match-status-over";return <tr key={a.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(a.assembly_orders?.order_no,"assembly");}}>{a.assembly_orders?.order_no}</code></td><td>{a.assembly_orders?.order_date}</td><td className="qty-cell">{a.qty}</td><td>{a.assembler||"-"}</td><td>{a.warehouse_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{a.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("assembly_items",a);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無組裝記錄</div>}</div>
+    <div className="expand-section"><div className="expand-title">📦 包裝出貨入庫記錄 ({expandData.pkg.length}筆)</div>{expandData.pkg.length>0?<table className="expand-table"><thead><tr><th>單號</th><th>包裝日期</th><th style={{textAlign:"right"}}>數量</th><th>客戶</th><th>測試人員</th><th>檢驗人員</th><th>組裝日期</th><th>配對狀態</th><th>備註</th>{onEditClick&&<th style={{width:50}}>操作</th>}</tr></thead><tbody>{expandData.pkg.map(p=>{const ms=matchStatus[p.id];const msCls=ms?.color==="#2e7d32"?"match-status-ok":ms?.color==="#c62828"?"match-status-over":"match-status-pending";return <tr key={p.id}><td><code style={{fontWeight:600,color:"var(--accent)",cursor:"pointer",textDecoration:"underline"}} onClick={e=>{e.stopPropagation();onOrderClick(p.packaging_orders?.order_no,"packaging");}}>{p.packaging_orders?.order_no}</code></td><td>{p.packaging_orders?.order_date}</td><td className="qty-cell">{p.qty}</td><td>{p.is_stock?"庫存":p.customers?.name||"-"}</td><td>{p.tester||"-"}</td><td>{p.inspector||"-"}</td><td>{p.assembly_date||"-"}</td><td className={msCls} dangerouslySetInnerHTML={{__html:ms?.label||"-"}}/><td>{p.note||"-"}</td>{onEditClick&&<td><button className="btn-edit" onClick={e=>{e.stopPropagation();onEditClick("packaging_items",p);}}>修改</button></td>}</tr>;})}</tbody></table>:<div style={{color:"var(--muted)",fontSize:12,padding:8}}>無包裝記錄</div>}</div>
   </div>;
 }
 
@@ -405,60 +395,21 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const[suppForm,setSuppForm]=useState({qty:1,assembler:"",tester:"",inspector:"",customer_id:"",assembly_date:"",note:""});
   const[staffModal,setStaffModal]=useState({show:false,role:"general"});
   const[editModal,setEditModal]=useState({show:false,item:null,tableName:""});
-  const[confirmModal,setConfirmModal]=useState({show:false,row:null});
-  const[checkedIds,setCheckedIds]=useState(new Set());
-  const[confirmedIds,setConfirmedIds]=useState(new Set());
+
 
   const load=useCallback(async()=>{setLoading(true);try{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);try{const rpcData=await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt});setData(rpcData||[]);}catch(rpcErr){console.error("RPC failed, fallback to view:",rpcErr);toast("⚠ 區間累計函數執行失敗，已切換為舊版逐日比對模式","warning");let query=`select=*&order_date=gte.${df}&order_date=lte.${dt}`;setData(await supaFetch("v_reconciliation",{query})||[]);}}catch(e){console.error(e);}setLoading(false);},[dateFrom,dateTo]);
   useEffect(()=>{load();},[load]);
 
   const searchByDate=async()=>{const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);setLoading(true);try{setData(await supaRpc("fn_reconcile_by_date_range",{p_date_from:df,p_date_to:dt})||[]);}catch(e){console.error(e);load();}setLoading(false);};
 
-  const loadConfirmedIds=async(productCode)=>{
-    try{
-      const rows=await supaFetch("reconciliation_confirmed",{query:`select=confirmed_item_ids,products!inner(product_id)&products.product_id=eq.${encodeURIComponent(productCode)}`});
-      const ids=new Set();
-      (rows||[]).forEach(r=>{(r.confirmed_item_ids||[]).forEach(id=>ids.add(id));});
-      setConfirmedIds(ids);
-    }catch(e){console.error("loadConfirmedIds error:",e);setConfirmedIds(new Set());}
-  };
-
   const loadDetail=async(productId,productCode,orderDate)=>{
     const rowKey=productCode+"_"+(orderDate||"all");
     if(expandedRow===rowKey){setExpandedRow(null);return;}
-    setExpandedRow(rowKey);setSupplementing(null);setCheckedIds(new Set());
+    setExpandedRow(rowKey);setSupplementing(null);
     try{
-      const[detail]=await Promise.all([loadDetailItems(productCode,dateFrom,dateTo),loadConfirmedIds(productCode)]);
+      const detail=await loadDetailItems(productCode,dateFrom,dateTo);
       setExpandData(detail);
     }catch(e){console.error(e);setExpandData({asm:[],pkg:[]});}
-  };
-
-  const handleCheck=(id)=>{setCheckedIds(prev=>{const next=new Set(prev);if(next.has(id))next.delete(id);else next.add(id);return next;});};
-
-  const handleConfirmBatch=async()=>{
-    if(checkedIds.size===0)return;
-    const asmChecked=(expandData.asm||[]).filter(a=>checkedIds.has(a.id));
-    const pkgChecked=(expandData.pkg||[]).filter(p=>checkedIds.has(p.id));
-    const asmQty=asmChecked.reduce((s,a)=>s+(a.qty||0),0);
-    const pkgQty=pkgChecked.reduce((s,p)=>s+(p.qty||0),0);
-    if(asmQty===0||pkgQty===0){toast("請同時勾選組裝單和包裝單","warning");return;}
-    // 算日期範圍
-    const allDates=[...asmChecked.map(a=>a.assembly_orders?.order_date),...pkgChecked.map(p=>p.packaging_orders?.order_date)].filter(Boolean).sort();
-    const df=allDates[0]||dateFrom||"2020-01-01";const dt=allDates[allDates.length-1]||dateTo||new Date().toISOString().slice(0,10);
-    // 取 product_id
-    const firstItem=asmChecked[0]||pkgChecked[0];
-    const productId=firstItem?.product_id;
-    if(!productId){toast("找不到產品 ID","error");return;}
-    const itemIds=[...checkedIds];
-    try{
-      await supaFetch("reconciliation_confirmed",{method:"POST",body:{product_id:productId,date_from:df,date_to:dt,assembly_qty:asmQty,packaging_qty:pkgQty,confirmed_item_ids:itemIds,confirmed_by:"系統使用者"}});
-      toast(`✅ 已確認 ${asmChecked.length+pkgChecked.length} 筆（組裝 ${asmQty} + 包裝 ${pkgQty}）`,"success");
-      setCheckedIds(new Set());
-      // 重新載入
-      const[pc]=expandedRow.split("_");
-      await loadConfirmedIds(pc);
-      load();
-    }catch(e){toast("確認失敗: "+e.message,"error");}
   };
 
   const updateLocal=(productId,updates)=>{setData(prev=>prev.map(r=>r.product_id===productId?{...r,...updates}:r));};
@@ -467,17 +418,17 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const markHidden=async(productId)=>{updateLocal(productId,{hidden:true});try{await supaPatch("reconciliation_resolved",`product_id=eq.${productId}`,{hidden:true});}catch(e){toast("標記失敗: "+e.message,"error");updateLocal(productId,{hidden:false});}};
   const unmarkHidden=async(productId)=>{updateLocal(productId,{hidden:false});try{await supaPatch("reconciliation_resolved",`product_id=eq.${productId}`,{hidden:false});}catch(e){toast("取消失敗: "+e.message,"error");updateLocal(productId,{hidden:true});}};
 
-  // 確認鎖定
+  // 確認鎖定（toggle）
   const confirmReconciliation=async(row)=>{
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
     try{
       await supaFetch("reconciliation_confirmed",{method:"POST",body:{product_id:row.product_id,date_from:df,date_to:dt,assembly_qty:Number(row.assembly_qty),packaging_qty:Number(row.packaging_qty),confirmed_by:"系統使用者"}});
-      toast(`✅ ${row.product_code} 已確認鎖定`,"success");
-      setConfirmModal({show:false,row:null});
+      toast(`${row.product_code} 已確認鎖定`,"success");
       load();
     }catch(e){toast("確認失敗: "+e.message,"error");}
   };
   const unconfirmReconciliation=async(row)=>{
+    if(!confirm(`確定要取消「${row.product_code}」的確認鎖定嗎？`))return;
     const df=dateFrom||"2020-01-01";const dt=dateTo||new Date().toISOString().slice(0,10);
     try{
       await supaDelete("reconciliation_confirmed",`product_id=eq.${row.product_id}&date_from=eq.${df}&date_to=eq.${dt}`);
@@ -512,7 +463,7 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
   const statusMap={missing_pkg:"error",missing_asm:"warning",qty_mismatch:"warning",matched:"success",wip_normal:"info",over_packaged:"error"};
   const iconBg={total:"var(--accent)",success:"var(--success)",warning:"var(--warning)",error:"var(--danger)",info:"#2D5F8A"};
   const SortTh=({col,children,style:s})=>(<th onClick={()=>toggleSort(col)} className={sortCol===col?"sorted":""} style={s}>{children}<span className="sort-arrow">{sortCol===col?(sortDir==="asc"?"▲":"▼"):"⇅"}</span></th>);
-  const stats=[{key:"all",l:"總產品數",v:allVisible.length,t:"total",i:"📦"},{key:"matched",l:`核對一致`,v:matched,t:"success",i:"✓",sub:confirmedCount>0?`已確認 ${confirmedCount}`:null},{key:"wip",l:"在製品",v:wip,t:"info",i:"🔄"},{key:"mismatch",l:"數量差異",v:warnings,t:"warning",i:"⚠"},{key:"over",l:"包裝超出",v:overPkg,t:"error",i:"📛"},{key:"missing",l:"漏單",v:errors,t:"error",i:"✕"}];
+  const stats=[{key:"all",l:"總產品數",v:allVisible.length,t:"total",i:"📦"},{key:"matched",l:`核對一致`,v:matched,t:"success",i:"✓",sub:matched>0?`已確認 ${confirmedCount} / 未確認 ${matched-confirmedCount}`:null},{key:"wip",l:"在製品",v:wip,t:"info",i:"🔄"},{key:"mismatch",l:"數量差異",v:warnings,t:"warning",i:"⚠"},{key:"over",l:"包裝超出",v:overPkg,t:"error",i:"📛"},{key:"missing",l:"漏單",v:errors,t:"error",i:"✕"}];
   const addStaff=async(name,role)=>{try{await supaFetch("staff",{method:"POST",body:{name,role}});toast(`人員「${name}」新增成功`,"success");reloadStaff();}catch(e){toast("新增失敗: "+e.message,"error");}};
 
   return <div>
@@ -556,13 +507,12 @@ function ReconciliationTab({products,customers,staff,toast,reloadStaff}){
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.15em",fontWeight:700,textAlign:"right",color:"#1a1a1a"}}>{r.packaging_qty}{r.confirmed_pkg_qty>0&&<span style={{fontSize:10,color:"var(--success)",marginLeft:3}} title={`已確認 ${r.confirmed_pkg_qty}`}>(+{r.confirmed_pkg_qty})</span>}</td>
             <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"1.2em",fontWeight:800,textAlign:"right",color:r.diff>0?"var(--danger)":r.diff<0?"var(--warning)":"var(--success)"}}>{r.diff>0?`+${r.diff}`:r.diff}</td>
             <td><Badge type={statusMap[r.status]}>{r.status_desc}</Badge>{isConfirmed&&isMatched&&<span className="resolve-tag confirmed-tag" style={{marginLeft:4}}>已確認</span>}{isResolved&&!isHidden&&needsAction&&<span className="resolve-tag" style={{marginLeft:4}}>已處理</span>}{isHidden&&<span className="resolve-tag hide-tag" style={{marginLeft:4}}>已隱藏</span>}</td>
-            <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isMatched?<div className="resolve-actions">{isConfirmed?<div style={{fontSize:10,color:"var(--success)",lineHeight:1.4,textAlign:"left"}}><div>✅ 已確認 {r.confirmed_asm_qty}/{r.confirmed_pkg_qty}</div><button className="btn-edit" style={{fontSize:10,marginTop:2}} onClick={()=>unconfirmReconciliation(r)}>取消確認</button></div>:<span style={{fontSize:11,color:"var(--muted)"}}>展開勾選確認 →</span>}</div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
+            <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>{isMatched?<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><button className={`toggle-switch ${isConfirmed?"on":"off"}`} title={isConfirmed?"點擊取消確認":"點擊確認鎖定"} onClick={()=>isConfirmed?unconfirmReconciliation(r):confirmReconciliation(r)}/><span style={{fontSize:10,color:isConfirmed?"var(--success)":"var(--muted)"}}>{isConfirmed?"已確認":"未確認"}</span></div>:needsAction&&<div className="resolve-actions"><label title="已處理" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isResolved} onChange={e=>{e.stopPropagation();isResolved?unmarkResolved(r.product_id):markResolved(r.product_id);}}/><span>已處理</span></label>{isResolved&&<label title="不再顯示" style={{display:"flex",alignItems:"center",gap:2,cursor:"pointer",fontSize:11}}><input type="checkbox" className="resolve-check" style={{width:15,height:15}} checked={isHidden} onChange={e=>{e.stopPropagation();isHidden?unmarkHidden(r.product_id):markHidden(r.product_id);}}/><span>隱藏</span></label>}</div>}</td>
           </tr>
           {isExpanded&&<tr className="expand-row"><td colSpan={9}>
             <ExpandDetailSection expandData={expandData}
               onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}
-              onEditClick={(tableName,item)=>setEditModal({show:true,tableName,item:{id:item.id,qty:item.qty,orderNo:(tableName==="assembly_items"?item.assembly_orders:item.packaging_orders)?.order_no,productCode:item.products?.product_id,productName:item.products?.product_name}})}
-              checkedIds={checkedIds} confirmedIds={confirmedIds} onCheck={handleCheck} onConfirmBatch={handleConfirmBatch}/>
+              onEditClick={(tableName,item)=>setEditModal({show:true,tableName,item:{id:item.id,qty:item.qty,orderNo:(tableName==="assembly_items"?item.assembly_orders:item.packaging_orders)?.order_no,productCode:item.products?.product_id,productName:item.products?.product_name}})}/>
             {needsAction&&!supplementing&&<div style={{display:"flex",gap:8,padding:"0 16px 12px"}}>
               <button className="btn btn-sm btn-primary" onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"asm",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1,order_date:r.order_date||""});}}>＋ 補組裝單</button>
               <button className="btn btn-sm btn-primary" style={{background:"var(--accent)"}} onClick={e=>{e.stopPropagation();setSupplementing({product_id:r.product_id,product_code:r.product_code,product_name:r.product_name,order_date:r.order_date,type:"pkg",diff:Math.abs(r.diff)});setSuppForm({...suppForm,qty:Math.abs(r.diff)||1});}}>＋ 補包裝出貨單</button>
