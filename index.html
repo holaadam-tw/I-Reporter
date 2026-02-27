@@ -1241,12 +1241,13 @@ function DashboardTab({toast,onNavigate}){
   const[orderModal,setOrderModal]=useState({show:false,orderNo:null,orderType:null});
   const[activeCard,setActiveCard]=useState(null);const[cardOrders,setCardOrders]=useState([]);const[cardLoading,setCardLoading]=useState(false);
   const[cardSearch,setCardSearch]=useState("");const[cardStatusFilter,setCardStatusFilter]=useState("");
+  const[cardPage,setCardPage]=useState(1);const[cardPageSize,setCardPageSize]=useState(50);
   const d30=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
   const toggleDetail=async(row)=>{const rowKey=typeof row==="string"?row:row.product_code;if(expandedRow===rowKey){setExpandedRow(null);return;}setExpandedRow(rowKey);try{const pid=typeof row==="string"?null:row.product_id;setExpandData(await loadDetailItems(rowKey,d30,today,pid));}catch(e){console.error(e);setExpandData({asm:[],pkg:[],cnv:[]});}};
 
   const handleCardClick=async(cardKey)=>{
     if(activeCard===cardKey){setActiveCard(null);setCardOrders([]);return;}
-    setActiveCard(cardKey);setCardLoading(true);setCardSearch("");setCardStatusFilter("");
+    setActiveCard(cardKey);setCardLoading(true);setCardSearch("");setCardStatusFilter("");setCardPage(1);
     try{
       if(cardKey==="products"){
         try{const rec=await supaRpc("fn_reconcile_by_date_range",{p_date_from:d30,p_date_to:today});setCardOrders(rec||[]);}catch(e){setCardOrders([]);}
@@ -1342,8 +1343,8 @@ function DashboardTab({toast,onNavigate}){
         <button className="btn btn-sm btn-secondary" style={{fontSize:12,padding:"2px 8px"}} onClick={()=>{setActiveCard(null);setCardOrders([]);}}>✕ 收起</button>
       </div>
       {(activeCard==="products"||activeCard==="anomalies")&&!cardLoading&&<div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}} onClick={e=>e.stopPropagation()}>
-        <input className="input" style={{width:200,padding:"5px 8px",fontSize:12}} placeholder="搜尋產品編號或名稱..." value={cardSearch} onChange={e=>{e.stopPropagation();setCardSearch(e.target.value);}} onClick={e=>e.stopPropagation()}/>
-        {activeCard==="products"&&<select className="input" style={{width:130,padding:"5px 8px",fontSize:12}} value={cardStatusFilter} onChange={e=>{e.stopPropagation();setCardStatusFilter(e.target.value);}} onClick={e=>e.stopPropagation()}>
+        <input className="input" style={{width:200,padding:"5px 8px",fontSize:12}} placeholder="搜尋產品編號或名稱..." value={cardSearch} onChange={e=>{e.stopPropagation();setCardSearch(e.target.value);setCardPage(1);}} onClick={e=>e.stopPropagation()}/>
+        {activeCard==="products"&&<select className="input" style={{width:130,padding:"5px 8px",fontSize:12}} value={cardStatusFilter} onChange={e=>{e.stopPropagation();setCardStatusFilter(e.target.value);setCardPage(1);}} onClick={e=>e.stopPropagation()}>
           <option value="">全部狀態</option>
           <option value="matched">核對一致</option>
           <option value="wip_normal">在製品</option>
@@ -1360,8 +1361,11 @@ function DashboardTab({toast,onNavigate}){
             if(activeCard==="anomalies")return r.status!=="matched"&&!r.hidden&&!r.resolved_at;
             return true;
           });
+          const cardTotalPages=Math.max(1,Math.ceil(filteredCards.length/cardPageSize));
+          const cardSafePage=Math.min(cardPage,cardTotalPages);
+          const pagedCards=filteredCards.slice((cardSafePage-1)*cardPageSize,cardSafePage*cardPageSize);
           return <><div className="table-wrap"><table><thead><tr><th style={{width:30}}></th><th>日期</th><th>產品編號</th><th>產品名稱</th><th style={{textAlign:"right"}}>組裝數</th><th style={{textAlign:"right"}}>包裝數</th><th style={{textAlign:"right"}}>差異</th><th>狀態</th></tr></thead>
-          <tbody>{filteredCards.map((r,i)=>{const isExp=expandedRow===r.product_code;return <React.Fragment key={i}>
+          <tbody>{pagedCards.map((r,i)=>{const isExp=expandedRow===r.product_code;return <React.Fragment key={i}>
             <tr className="clickable" onClick={()=>toggleDetail(r)}>
               <td style={{textAlign:"center",fontSize:16,color:"var(--muted)"}}>{isExp?"▼":"▶"}</td>
               <td style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,color:"var(--muted)"}}>{r.order_date||r.first_asm_date||r.first_pkg_date||"-"}</td>
@@ -1375,7 +1379,19 @@ function DashboardTab({toast,onNavigate}){
               <ExpandDetailSection expandData={expandData} onOrderClick={(no,type)=>setOrderModal({show:true,orderNo:no,orderType:type})}/>
               {expandData.cnv&&expandData.cnv.length>0&&<div className="expand-content" style={{paddingTop:0}}><div className="expand-section" style={{borderLeftColor:"#B8860B"}}><div className="expand-title">🔄 轉換記錄 ({expandData.cnv.length}筆)</div><table className="expand-table"><thead><tr><th>單號</th><th>轉換日期</th><th>來源產品</th><th>目標產品</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th><th>轉換原因</th></tr></thead><tbody>{expandData.cnv.map(c=><tr key={c.id}><td><code style={{fontWeight:600,color:"#B8860B"}}>{c.order_no}</code></td><td>{c.conversion_date}</td><td>{c.from_product?.product_id} - {c.from_product?.product_name}</td><td>{c.to_product?.product_id} - {c.to_product?.product_name}</td><td className="qty-cell">{c.qty}</td><td><Badge type={c.status==="completed"?"success":c.status==="cancelled"?"error":"warning"}>{c.status==="completed"?"已完成":c.status==="cancelled"?"已取消":"待處理"}</Badge></td><td>{c.reason||"-"}</td></tr>)}</tbody></table></div></div>}
             </td></tr>}
-          </React.Fragment>;})}</tbody></table></div><div style={{display:"flex",justifyContent:"space-between",marginTop:8,alignItems:"center"}}><span style={{fontSize:11,color:"var(--muted)"}}>顯示 {filteredCards.length} / {cardOrders.length} 筆</span><button className="btn btn-sm btn-secondary" onClick={()=>onNavigate("reconciliation")}>查看完整核對報告 →</button></div></>})()
+          </React.Fragment>;})}</tbody></table></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10,fontSize:12,color:"var(--muted)",flexWrap:"wrap",gap:8}}>
+            <span>顯示 {filteredCards.length>0?(cardSafePage-1)*cardPageSize+1:0}~{Math.min(cardSafePage*cardPageSize,filteredCards.length)} / {filteredCards.length} 筆 (共 {cardOrders.length} 筆)</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span>每頁</span>
+              {[50,100].map(n=><button key={n} className={`btn btn-sm ${cardPageSize===n?"btn-primary":"btn-secondary"}`} style={{padding:"2px 8px",fontSize:11,minWidth:36}} onClick={()=>{setCardPageSize(n);setCardPage(1);}}>{n}</button>)}
+              <span style={{margin:"0 4px"}}>筆</span>
+              <button className="btn btn-sm btn-secondary" disabled={cardSafePage<=1} onClick={()=>setCardPage(p=>p-1)}>← 上一頁</button>
+              <span style={{fontWeight:600,color:"var(--text)"}}>第 {cardSafePage}/{cardTotalPages} 頁</span>
+              <button className="btn btn-sm btn-secondary" disabled={cardSafePage>=cardTotalPages} onClick={()=>setCardPage(p=>p+1)}>下一頁 →</button>
+              <button className="btn btn-sm btn-secondary" onClick={()=>onNavigate("reconciliation")}>查看完整核對報告 →</button>
+            </div>
+          </div></>})()
         :activeCard==="orders"?<div className="table-wrap"><table><thead><tr><th>單號</th><th>類型</th><th style={{textAlign:"right"}}>數量</th><th>狀態</th></tr></thead>
           <tbody>{cardOrders.map((o,i)=><tr key={i} className="clickable" onClick={()=>setOrderModal({show:true,orderNo:o.order_no,orderType:o._type})}>
             <td><code style={{fontWeight:600,color:"var(--primary)"}}>{o.order_no}</code></td>
